@@ -5,6 +5,7 @@ import com.cleanbharat.wastemanagement.dto.ReportResponse;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.ReportStatus;
+import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -26,8 +27,8 @@ public class ReportServiceImpl implements ReportService {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication(); // logged user
         String email = authentication.getName(); // user email
 
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found")); // find user
+        User user = userRepository.findByEmail(email)       // find user
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         GarbageReport report = GarbageReport.builder()
                 .title(request.getTitle())
@@ -55,7 +56,7 @@ public class ReportServiceImpl implements ReportService {
     public ReportResponse getReport(Long id) {
         GarbageReport report =
                 reportRepository.findById(id)
-                        .orElseThrow(() -> new RuntimeException("Report not found"));
+                        .orElseThrow(() -> new ResourceNotFoundException("Report not found"));
 
         return mapToResponse(report);
     }
@@ -66,7 +67,7 @@ public class ReportServiceImpl implements ReportService {
         String email = authentication.getName(); // email
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         return reportRepository.findByUser(user)
                 .stream()

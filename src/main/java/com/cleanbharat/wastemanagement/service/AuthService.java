@@ -3,6 +3,7 @@ package com.cleanbharat.wastemanagement.service;
 import com.cleanbharat.wastemanagement.dto.RegisterRequest;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.Role;
+import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -47,9 +48,7 @@ public class AuthService {
         // Find user by email
         User user = userRepository
                 .findByEmail(request.getEmail())
-                .orElseThrow(
-                        () -> new RuntimeException("User not found")
-                );
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         // Verify password
         boolean isPasswordValid =
