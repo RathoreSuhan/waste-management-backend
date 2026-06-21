@@ -29,7 +29,13 @@ public class GarbageReport {
     @Enumerated(EnumType.STRING) // store enum as text
     private ReportStatus status;
 
-    private LocalDateTime createdAt; // report creation time
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime createdAt;     // report creation time
+
+    @PrePersist
+    public void prePersist() {
+        this.createdAt = LocalDateTime.now();
+    }
 
     @ManyToOne // many reports -> one user
     @JoinColumn(name = "user_id") // foreign key
