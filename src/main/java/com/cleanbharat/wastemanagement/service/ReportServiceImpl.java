@@ -38,12 +38,18 @@ public class ReportServiceImpl implements ReportService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         GarbageReport report = GarbageReport.builder()
-                .title(request.getTitle())
-                .description(request.getDescription())
-                .location(request.getLocation())
-                .imageUrl(imageUrl) // URL from Cloudinary
+                .title(request.getTitle()) // report title
+                .description(request.getDescription()) // garbage details
+                .latitude(request.getLatitude()) // GPS latitude
+                .longitude(request.getLongitude()) // GPS longitude
+                .address(request.getAddress()) // full address
+                .landmark(request.getLandmark()) // nearby landmark
+                .city(request.getCity()) // city name
+                .state(request.getState()) // state name
+                .pincode(request.getPincode()) // postal code
+                .imageUrl(imageUrl) // cloudinary image URL
                 .status(ReportStatus.PENDING) // default status
-                .user(user)
+                .user(user) // report owner
                 .build();
 
         GarbageReport savedReport = reportRepository.save(report); // save report
@@ -83,15 +89,22 @@ public class ReportServiceImpl implements ReportService {
     }
 
     private ReportResponse mapToResponse(GarbageReport report) {
+
         return ReportResponse.builder()
-                .id(report.getId())
-                .title(report.getTitle())
-                .description(report.getDescription())
-                .location(report.getLocation())
-                .imageUrl(report.getImageUrl())
-                .status(report.getStatus().name())
-                .reportedBy(report.getUser().getName())
-                .createdAt(report.getCreatedAt())
+                .id(report.getId()) // report id
+                .title(report.getTitle()) // title
+                .description(report.getDescription()) // description
+                .latitude(report.getLatitude()) // GPS latitude
+                .longitude(report.getLongitude()) // GPS longitude
+                .address(report.getAddress()) // full address
+                .landmark(report.getLandmark()) // nearby landmark
+                .city(report.getCity()) // city
+                .state(report.getState()) // state
+                .pincode(report.getPincode()) // postal code
+                .imageUrl(report.getImageUrl()) // cloudinary image
+                .status(report.getStatus().name()) // enum -> String
+                .reportedBy(report.getUser().getName()) // citizen name
+                .createdAt(report.getCreatedAt()) // creation timestamp
                 .build();
     }
 }

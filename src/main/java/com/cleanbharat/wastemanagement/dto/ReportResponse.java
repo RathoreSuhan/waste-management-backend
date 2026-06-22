@@ -3,6 +3,7 @@ package com.cleanbharat.wastemanagement.dto;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
+
 import java.time.LocalDateTime;
 
 @Getter
@@ -14,15 +15,27 @@ public class ReportResponse {
 
     private String title; // report title
 
-    private String description; // report details
+    private String description; // garbage details
 
-    private String location; // area name
+    private Double latitude; // GPS latitude
 
-    private String imageUrl; // image path/url
+    private Double longitude; // GPS longitude
 
-    private String status; // current status
+    private String address; // full address
+
+    private String landmark; // nearby landmark
+
+    private String city; // city name
+
+    private String state; // state name
+
+    private String pincode; // postal code
+
+    private String imageUrl; // cloudinary image url
+
+    private String status; // report status
 
     private String reportedBy; // citizen name
 
-    private LocalDateTime createdAt; // creation time
+    private LocalDateTime createdAt; // report creation time
 }

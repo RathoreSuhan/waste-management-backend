@@ -20,7 +20,17 @@ public class ReportController {
     public ResponseEntity<ReportResponse> createReport(
             @RequestParam String title,
             @RequestParam String description,
-            @RequestParam String location,
+            @RequestParam Double latitude,
+            @RequestParam Double longitude,
+            @RequestParam String address,
+
+            @RequestParam(required = false)
+            String landmark,
+
+            @RequestParam String city,
+            @RequestParam String state,
+            @RequestParam String pincode,
+
             @RequestParam("image")
             MultipartFile image
     ) {
@@ -28,7 +38,16 @@ public class ReportController {
 
         request.setTitle(title);
         request.setDescription(description);
-        request.setLocation(location);
+
+        request.setLatitude(latitude);
+        request.setLongitude(longitude);
+
+        request.setAddress(address);
+        request.setLandmark(landmark);
+
+        request.setCity(city);
+        request.setState(state);
+        request.setPincode(pincode);
 
         ReportResponse response = reportService.createReport(request, image);
 
