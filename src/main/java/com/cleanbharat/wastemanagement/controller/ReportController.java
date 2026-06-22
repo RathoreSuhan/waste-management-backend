@@ -6,6 +6,8 @@ import com.cleanbharat.wastemanagement.service.ReportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
 import java.util.List;
 
 @RestController // REST API controller
@@ -14,9 +16,22 @@ import java.util.List;
 public class ReportController {
     private final ReportService reportService; // service layer
 
-    @PostMapping // POST /api/reports
-    public ResponseEntity<ReportResponse> createReport(@RequestBody CreateReportRequest request) {
-        ReportResponse response = reportService.createReport(request);
+    @PostMapping(consumes = "multipart/form-data")      // POST /api/reports
+    public ResponseEntity<ReportResponse> createReport(
+            @RequestParam String title,
+            @RequestParam String description,
+            @RequestParam String location,
+            @RequestParam("image")
+            MultipartFile image
+    ) {
+        CreateReportRequest request = new CreateReportRequest();
+
+        request.setTitle(title);
+        request.setDescription(description);
+        request.setLocation(location);
+
+        ReportResponse response = reportService.createReport(request, image);
+
         return ResponseEntity.ok(response);
     }
 

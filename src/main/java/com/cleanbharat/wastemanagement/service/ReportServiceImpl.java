@@ -12,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -21,9 +23,14 @@ public class ReportServiceImpl implements ReportService {
 
     private final GarbageReportRepository reportRepository; // report repo
     private final UserRepository userRepository; // user repo
+    private final CloudinaryService cloudinaryService; // cloudinary service for image upload
+
 
     @Override
-    public ReportResponse createReport(CreateReportRequest request) {
+    public ReportResponse createReport(CreateReportRequest request, MultipartFile image) {
+        // Upload image to Cloudinary
+        String imageUrl = cloudinaryService.uploadFile(image);
+
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication(); // logged user
         String email = authentication.getName(); // user email
 
@@ -34,7 +41,7 @@ public class ReportServiceImpl implements ReportService {
                 .title(request.getTitle())
                 .description(request.getDescription())
                 .location(request.getLocation())
-                .imageUrl(request.getImageUrl())
+                .imageUrl(imageUrl) // URL from Cloudinary
                 .status(ReportStatus.PENDING) // default status
                 .user(user)
                 .build();

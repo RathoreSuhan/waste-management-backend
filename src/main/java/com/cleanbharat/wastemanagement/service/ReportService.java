@@ -2,12 +2,14 @@ package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.CreateReportRequest;
 import com.cleanbharat.wastemanagement.dto.ReportResponse;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
 public interface ReportService {
 
-    ReportResponse createReport(CreateReportRequest request); // create report
+    // create report with image upload
+    ReportResponse createReport(CreateReportRequest request, MultipartFile image);
 
     List<ReportResponse> getAllReports(); // all reports
 

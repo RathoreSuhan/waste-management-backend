@@ -12,6 +12,4 @@ public class CreateReportRequest {
     private String description; // report details
 
     private String location; // area name
-
-    private String imageUrl; // image path/url
 }
