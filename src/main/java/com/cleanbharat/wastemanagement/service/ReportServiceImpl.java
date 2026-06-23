@@ -101,6 +101,7 @@ public class ReportServiceImpl implements ReportService {
                 .pincode(report.getPincode()) // postal code
                 .imageUrl(report.getImageUrl()) // cloudinary image
                 .status(report.getStatus().name()) // enum -> String
+                .urgencyScore(report.getUrgencyScore()) // average citizen rating
                 .reportedBy(report.getUser().getName()) // citizen name
                 .createdAt(report.getCreatedAt()) // creation timestamp
                 .build();

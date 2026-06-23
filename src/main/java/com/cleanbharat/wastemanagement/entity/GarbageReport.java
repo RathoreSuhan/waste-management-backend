@@ -44,6 +44,8 @@ public class GarbageReport {
 
     private String imageUrl; // cloudinary image url
 
+    private Double urgencyScore;    // Average citizen rating (1-5)
+
     @Enumerated(EnumType.STRING)
     private ReportStatus status; // PENDING, IN_PROGRESS, RESOLVED
 

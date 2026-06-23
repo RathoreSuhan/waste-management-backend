@@ -35,6 +35,8 @@ public class ReportResponse {
 
     private String status; // report status
 
+    private Double urgencyScore; // Average citizen rating (1-5)
+
     private String reportedBy; // citizen name
 
     private LocalDateTime createdAt; // report creation time
