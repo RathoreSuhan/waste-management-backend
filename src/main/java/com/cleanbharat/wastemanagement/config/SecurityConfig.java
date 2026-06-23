@@ -28,11 +28,16 @@ public class SecurityConfig {
 
                 // Authorization Rules
                 .authorizeHttpRequests(auth -> auth
+
                         // Public APIs
                         .requestMatchers("/api/auth/**", "/api/files/**")
                         .permitAll()
 
-                        // Everything else requires login
+                        // Admin Only APIs
+                        .requestMatchers("/api/municipal-corporations/**")
+                        .hasRole("ADMIN")
+
+                        // All other APIs require login
                         .anyRequest()
                         .authenticated()
                 )
