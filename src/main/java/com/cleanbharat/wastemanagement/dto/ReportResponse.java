@@ -37,6 +37,8 @@ public class ReportResponse {
 
     private Double urgencyScore; // Average citizen rating (1-5)
 
+    private Double engagementScore; // report popularity score
+
     private String reportedBy; // citizen name
 
     private LocalDateTime createdAt; // report creation time

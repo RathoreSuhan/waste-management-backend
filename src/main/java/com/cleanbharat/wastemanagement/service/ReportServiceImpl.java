@@ -102,6 +102,7 @@ public class ReportServiceImpl implements ReportService {
                 .imageUrl(report.getImageUrl()) // cloudinary image
                 .status(report.getStatus().name()) // enum -> String
                 .urgencyScore(report.getUrgencyScore()) // average citizen rating
+                .engagementScore(report.getEngagementScore()) // urgency + discussion score
                 .reportedBy(report.getUser().getName()) // citizen name
                 .createdAt(report.getCreatedAt()) // creation timestamp
                 .build();

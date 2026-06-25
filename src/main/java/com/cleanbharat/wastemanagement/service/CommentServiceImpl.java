@@ -26,6 +26,7 @@ public class CommentServiceImpl implements CommentService {
     private final CommentRepository commentRepository;
     private final GarbageReportRepository reportRepository;
     private final UserRepository userRepository;
+    private final AnalyticsService analyticsService;
 
     @Override
     public CommentResponse addComment(Long reportId, CommentRequest request) {
@@ -45,6 +46,12 @@ public class CommentServiceImpl implements CommentService {
                 .build();
 
         Comment savedComment = commentRepository.save(comment);
+
+        // Recalculate engagement score
+        analyticsService.recalculateEngagementScore(
+                report.getId()
+        );
+
         return mapToResponse(savedComment);
     }
 
@@ -67,6 +74,12 @@ public class CommentServiceImpl implements CommentService {
                 .build();
 
         Comment savedReply = commentRepository.save(reply);
+
+        // Recalculate engagement score
+        analyticsService.recalculateEngagementScore(
+                parentComment.getReport().getId()
+        );
+
         return mapToResponse(savedReply);
     }
 
@@ -97,7 +110,11 @@ public class CommentServiceImpl implements CommentService {
 
         // Admin can delete any comment
         if (loggedInUser.getRole() == Role.ROLE_ADMIN) {
+            Long reportId = comment.getReport().getId();
             commentRepository.delete(comment);
+            analyticsService.recalculateEngagementScore(
+                    reportId
+            );
             return;
         }
 
@@ -108,7 +125,11 @@ public class CommentServiceImpl implements CommentService {
             );
         }
 
+        Long reportId = comment.getReport().getId();
         commentRepository.delete(comment);
+        analyticsService.recalculateEngagementScore(
+                reportId
+        );
     }
 
     private CommentResponse mapToResponse(Comment comment) {

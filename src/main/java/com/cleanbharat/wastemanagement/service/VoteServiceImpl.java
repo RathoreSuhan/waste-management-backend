@@ -24,6 +24,7 @@ public class VoteServiceImpl implements VoteService {
     private final VoteRepository voteRepository;
     private final GarbageReportRepository reportRepository;
     private final UserRepository userRepository;
+    private final AnalyticsService analyticsService;
 
     @Override
     public VoteResponse submitVote(VoteRequest request) {
@@ -36,8 +37,7 @@ public class VoteServiceImpl implements VoteService {
         }
 
         // Logged-in user
-        Authentication authentication =
-                SecurityContextHolder.getContext().getAuthentication();
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
         String email = authentication.getName();
 
@@ -55,8 +55,7 @@ public class VoteServiceImpl implements VoteService {
         // Find report
         GarbageReport report =
                 reportRepository.findById(request.getReportId())
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException("Report not found"));
+                        .orElseThrow(() -> new ResourceNotFoundException("Report not found"));
 
         // Check existing vote
         Vote vote = voteRepository
@@ -79,8 +78,7 @@ public class VoteServiceImpl implements VoteService {
         // Recalculate urgency score
         List<Vote> votes = voteRepository.findByReport(report);
 
-        double average =
-                votes.stream()
+        double average = votes.stream()
                         .mapToInt(Vote::getRating)
                         .average()
                         .orElse(0.0);
@@ -88,6 +86,11 @@ public class VoteServiceImpl implements VoteService {
         report.setUrgencyScore(average);
 
         reportRepository.save(report);
+
+        // Recalculate engagement score
+        analyticsService.recalculateEngagementScore(
+                report.getId()
+        );
 
         return VoteResponse.builder()
                 .reportId(report.getId())

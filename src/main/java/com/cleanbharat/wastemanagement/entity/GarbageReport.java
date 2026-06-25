@@ -46,6 +46,8 @@ public class GarbageReport {
 
     private Double urgencyScore;    // Average citizen rating (1-5)
 
+    private Double engagementScore; // urgency + discussion score
+
     @Enumerated(EnumType.STRING)
     private ReportStatus status; // PENDING, IN_PROGRESS, RESOLVED
 
