@@ -42,19 +42,15 @@ public class VoteServiceImpl implements VoteService {
         String email = authentication.getName();
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("User not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         // Only citizens can vote
         if (user.getRole() != Role.ROLE_CITIZEN) {
-            throw new InvalidVoteException(
-                    "Only citizens can vote"
-            );
+            throw new InvalidVoteException("Only citizens can vote");
         }
 
         // Find report
-        GarbageReport report =
-                reportRepository.findById(request.getReportId())
+        GarbageReport report = reportRepository.findById(request.getReportId())
                         .orElseThrow(() -> new ResourceNotFoundException("Report not found"));
 
         // Check existing vote
@@ -62,7 +58,7 @@ public class VoteServiceImpl implements VoteService {
                 .findByUserAndReport(user, report)
                 .orElse(null);
 
-        // Option B: Update existing vote
+        // Update existing vote
         if (vote != null) {
             vote.setRating(request.getRating());
         } else {

@@ -3,6 +3,9 @@ package com.cleanbharat.wastemanagement.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Entity // Marks this class as a database entity (table)
 @Getter
 @Setter
@@ -20,4 +23,8 @@ public class MunicipalCorporation {
     private String organizationName; // Municipal corporation name
     private String phone; // Contact phone number
     private String email; // Contact email address
+
+    @OneToMany(mappedBy = "assignedMunicipalCorporation")
+    @Builder.Default
+    private List<CleanupAssignment> assignments = new ArrayList<>();
 }

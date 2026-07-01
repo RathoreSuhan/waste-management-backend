@@ -5,9 +5,11 @@ import com.cleanbharat.wastemanagement.dto.ReportResponse;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.ReportStatus;
+import com.cleanbharat.wastemanagement.exception.InvalidReportCreationException;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
+import com.cleanbharat.wastemanagement.enums.Role;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -22,7 +24,7 @@ public class ReportServiceImpl implements ReportService {
     private final GarbageReportRepository reportRepository; // report repo
     private final UserRepository userRepository; // user repo
     private final CloudinaryService cloudinaryService; // cloudinary service for image upload
-
+    private final CleanupAssignmentService cleanupAssignmentService; // service to create cleanup assignment
 
     @Override
     public ReportResponse createReport(CreateReportRequest request, MultipartFile image) {
@@ -34,6 +36,11 @@ public class ReportServiceImpl implements ReportService {
 
         User user = userRepository.findByEmail(email)       // find user
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        // Only citizens can create garbage reports
+        if (user.getRole() != Role.ROLE_CITIZEN) {
+            throw new InvalidReportCreationException("Only citizens can create garbage reports.");
+        }
 
         GarbageReport report = GarbageReport.builder()
                 .title(request.getTitle()) // report title
@@ -51,6 +58,9 @@ public class ReportServiceImpl implements ReportService {
                 .build();
 
         GarbageReport savedReport = reportRepository.save(report); // save report
+
+        // Automatically create cleanup assignment
+        cleanupAssignmentService.createDefaultAssignment(savedReport);
 
         return mapToResponse(savedReport);
     }

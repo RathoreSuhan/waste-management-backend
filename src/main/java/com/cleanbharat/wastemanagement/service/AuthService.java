@@ -3,7 +3,7 @@ package com.cleanbharat.wastemanagement.service;
 import com.cleanbharat.wastemanagement.dto.RegisterRequest;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.Role;
-import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
+import com.cleanbharat.wastemanagement.exception.*;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -19,36 +19,41 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
 
-
     public String register(RegisterRequest request) {
         // Check if email already exists
-        if(userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email already registered");
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new EmailAlreadyExistsException("Email already registered");
         }
 
-        // Create User Entity
+        // Prevent self-registration as ADMIN
+        if (request.getRole() == Role.ROLE_ADMIN) {
+            throw new UnauthorizedRegistrationException("Admin registration is not allowed.");
+        }
+
+        // Validation for cleaners
+        if (request.getRole() == Role.ROLE_CLEANER && request.getCleanerType() == null) {
+            throw new InvalidRegistrationException("Cleaner type is required for ROLE_CLEANER.");
+        }
+
+        // Create User
         User user = User.builder()
                 .name(request.getName())
                 .email(request.getEmail())
-
-                // Encrypt Password
                 .password(passwordEncoder.encode(request.getPassword()))
-
-                // Default Role
-                .role(Role.ROLE_CITIZEN)
+                .role(request.getRole())
+                .cleanerType(request.getCleanerType())
+                .organizationName(request.getOrganizationName())
+                .rewardPoints(0)
                 .build();
 
-        // Save User
         userRepository.save(user);
-
         return "User Registered Successfully";
     }
 
     public AuthResponse login(LoginRequest request) {
         // Find user by email
-        User user = userRepository
-                .findByEmail(request.getEmail())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid email or password"));
 
         // Verify password
         boolean isPasswordValid =
@@ -58,7 +63,7 @@ public class AuthService {
                 );
 
         if (!isPasswordValid) {
-            throw new RuntimeException("Invalid password");
+            throw new InvalidCredentialsException("Invalid email or password");
         }
 
         // Generate JWT Token

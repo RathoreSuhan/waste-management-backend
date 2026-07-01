@@ -5,6 +5,8 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "garbage_reports")
@@ -42,7 +44,7 @@ public class GarbageReport {
     @Column(nullable = false)
     private String pincode; // postal code
 
-    private String imageUrl; // cloudinary image url
+    private String imageUrl; // Cloudinary image url
 
     private Double urgencyScore;    // Average citizen rating (1-5)
 
@@ -53,6 +55,14 @@ public class GarbageReport {
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt; // report creation timestamp
+
+    @OneToMany(
+            mappedBy = "report",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true
+    )
+    @Builder.Default
+    private List<CleanupAssignment> assignments = new ArrayList<>();
 
     @PrePersist
     public void prePersist() {

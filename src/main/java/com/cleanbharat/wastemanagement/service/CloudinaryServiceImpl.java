@@ -29,4 +29,26 @@ public class CloudinaryServiceImpl implements CloudinaryService {
             throw new RuntimeException("Failed to upload image");
         }
     }
+
+    @Override
+    public void deleteFile(String imageUrl) {
+        try {
+            /*
+             * Example URL:
+             * https://res.cloudinary.com/demo/image/upload/v123456/waste-management/abc123.jpg
+             *
+             * We need:
+             * waste-management/abc123
+             */
+
+            String publicId = imageUrl
+                    .substring(imageUrl.indexOf("/upload/") + 8)
+                    .replaceFirst("v\\d+/", "")          // remove version
+                    .replaceAll("\\.[^.]+$", "");        // remove extension
+
+            cloudinary.uploader().destroy(publicId, ObjectUtils.emptyMap());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to delete image from Cloudinary");
+        }
+    }
 }

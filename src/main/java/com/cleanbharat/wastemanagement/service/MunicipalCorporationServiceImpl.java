@@ -12,8 +12,7 @@ import java.util.List;
 
 @Service // Marks this class as a Spring Service Bean
 @RequiredArgsConstructor // Constructor Injection
-public class MunicipalCorporationServiceImpl
-        implements MunicipalCorporationService {
+public class MunicipalCorporationServiceImpl implements MunicipalCorporationService {
 
     private final MunicipalCorporationRepository municipalCorporationRepository;
 

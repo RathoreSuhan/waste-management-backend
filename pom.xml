@@ -28,6 +28,9 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+
+		<!-- Spring Cloud Version -->
+		<spring-cloud.version>2025.0.0</spring-cloud.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -90,12 +93,41 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- OpenFeign -->
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-openfeign</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>com.cloudinary</groupId>
 			<artifactId>cloudinary-http44</artifactId>
 			<version>1.39.0</version>
 		</dependency>
 	</dependencies>
+
+	<dependencyManagement>
+
+		<dependencies>
+
+			<!-- Spring Cloud BOM -->
+			<dependency>
+
+				<groupId>org.springframework.cloud</groupId>
+
+				<artifactId>spring-cloud-dependencies</artifactId>
+
+				<version>${spring-cloud.version}</version>
+
+				<type>pom</type>
+
+				<scope>import</scope>
+
+			</dependency>
+
+		</dependencies>
+
+	</dependencyManagement>
 
 	<build>
 		<plugins>
