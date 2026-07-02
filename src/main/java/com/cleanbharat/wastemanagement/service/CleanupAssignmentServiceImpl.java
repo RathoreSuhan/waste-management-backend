@@ -154,7 +154,19 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
             throw new UnauthorizedAssignmentAccessException("You are not assigned to this cleanup task.");
         }
 
-        // Cleanup must already be started
+        /*
+         * Cleanup has already been completed.
+         *
+         * Do not allow another upload.
+         */
+        if (assignment.getStatus() == AssignmentStatus.COMPLETED) {
+            throw new AssignmentAlreadyCompletedException("This cleanup task has already been completed and AI verified. No further image uploads are allowed.");
+        }
+
+        /*
+         * Cleanup must be started before
+         * uploading completion image.
+         */
         if (assignment.getStatus() != AssignmentStatus.IN_PROGRESS) {
             throw new CleanupNotStartedException("Cleanup must be started before uploading the completion image.");
         }
@@ -175,10 +187,18 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                         cleanupImageUrl
                 );
 
-        // Save AI verification result
+        /*
+         * AI verification succeeds only when:
+         *
+         * 1. Same location
+         * 2. Garbage removed
+         * 3. Confidence >= 85%
+         */
         assignment.setAiVerified(
-                aiResponse.getSameLocation()
-                && aiResponse.getGarbageRemoved()
+                Boolean.TRUE.equals(aiResponse.getSameLocation())
+                        && Boolean.TRUE.equals(aiResponse.getGarbageRemoved())
+                        && aiResponse.getConfidence() != null
+                        && aiResponse.getConfidence() >= 0.85
         );
 
         assignment.setAiConfidence(aiResponse.getConfidence());
@@ -228,7 +248,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 .message(
                         Boolean.TRUE.equals(assignment.getAiVerified())
                                 ? "Cleanup verified successfully. The report has been resolved."
-                                : "The uploaded image could not be verified. Please upload another image from the same location after completing the cleanup."
+                                : "The cleanup could not be verified with sufficient confidence. Please upload another clear image from the same location after completing the cleanup."
                 )
                 .build();
     }

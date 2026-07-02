@@ -80,10 +80,25 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.FORBIDDEN);
     }
 
+    @ExceptionHandler(AssignmentAlreadyCompletedException.class)
+    public ResponseEntity<ErrorResponse> handleAssignmentAlreadyCompletedException(AssignmentAlreadyCompletedException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
     @ExceptionHandler(CleanupNotStartedException.class)
     public ResponseEntity<ErrorResponse> handleCleanupNotStartedException(CleanupNotStartedException ex) {
         ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handles AI service failures.
+     */
+    @ExceptionHandler(AIServiceUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleAIServiceUnavailableException(AIServiceUnavailableException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.SERVICE_UNAVAILABLE.value());
+        return new ResponseEntity<>(error, HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     @ExceptionHandler(Exception.class)
