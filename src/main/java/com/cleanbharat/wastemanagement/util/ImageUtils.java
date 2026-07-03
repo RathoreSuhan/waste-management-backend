@@ -27,8 +27,7 @@ public class ImageUtils {
         ) {
 
             // Find suitable image reader
-            Iterator<ImageReader> readers =
-                    ImageIO.getImageReaders(imageInputStream);
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInputStream);
 
             // No reader means invalid image
             if (!readers.hasNext()) {
@@ -54,7 +53,6 @@ public class ImageUtils {
             };
 
         } catch (Exception ex) {
-
             return "application/octet-stream";
         }
     }

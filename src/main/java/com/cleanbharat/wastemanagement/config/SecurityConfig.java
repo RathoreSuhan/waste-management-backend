@@ -30,7 +30,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
 
                         // Public APIs
-                        .requestMatchers("/api/auth/**", "/api/files/**")
+                        .requestMatchers("/api/auth/**", "/api/files/**","/api/public-feed/**")
                         .permitAll()
 
                         // Admin Only APIs

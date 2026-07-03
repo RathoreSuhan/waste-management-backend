@@ -6,6 +6,8 @@ import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import java.util.List;
 import java.util.Optional;
 
@@ -38,4 +40,32 @@ public interface CleanupAssignmentRepository extends JpaRepository<CleanupAssign
             AssignmentStatus status
     );
 
+    // Fetch completed and AI-verified cleanup assignments for Public Feed
+    @Query("""
+        SELECT a
+        FROM CleanupAssignment a
+        JOIN FETCH a.report r
+        JOIN FETCH a.cleaner c
+        JOIN FETCH a.assignedMunicipalCorporation mc
+        WHERE a.status = com.cleanbharat.wastemanagement.enums.AssignmentStatus.COMPLETED
+          AND a.aiVerified = true
+        ORDER BY a.completedAt DESC
+        """)
+    List<CleanupAssignment> findCompletedVerifiedAssignments();
+
+
+    // Fetch a completed and AI-verified cleanup assignment by report ID
+    @Query("""
+        SELECT a
+        FROM CleanupAssignment a
+        JOIN FETCH a.report r
+        JOIN FETCH a.cleaner c
+        JOIN FETCH a.assignedMunicipalCorporation mc
+        WHERE a.status = com.cleanbharat.wastemanagement.enums.AssignmentStatus.COMPLETED
+          AND a.aiVerified = true
+          AND r.id = :reportId
+        """)
+    Optional<CleanupAssignment> findCompletedVerifiedAssignmentByReportId(
+            @Param("reportId") Long reportId
+    );
 }
