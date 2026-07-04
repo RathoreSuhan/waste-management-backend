@@ -61,4 +61,13 @@ public class PublicFeedResponse {
 
     // AI verification remarks
     private String aiRemarks;
+
+    // Total number of views
+    private Long viewCount;
+
+    // Total likes received
+    private Long likeCount;
+
+    // Total shares
+    private Long shareCount;
 }

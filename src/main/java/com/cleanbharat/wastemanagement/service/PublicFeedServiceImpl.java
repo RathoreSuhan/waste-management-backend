@@ -4,6 +4,7 @@ import com.cleanbharat.wastemanagement.dto.PublicFeedResponse;
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
+import com.cleanbharat.wastemanagement.entity.PublicFeedAnalytics;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import java.util.List;
@@ -14,6 +15,8 @@ public class PublicFeedServiceImpl implements PublicFeedService {
 
     // Repository for completed cleanup assignments
     private final CleanupAssignmentRepository assignmentRepository;
+
+    private final PublicFeedAnalyticsService publicFeedAnalyticsService;
 
     @Override
     public List<PublicFeedResponse> getPublicFeed() {
@@ -33,10 +36,42 @@ public class PublicFeedServiceImpl implements PublicFeedService {
         return mapToResponse(assignment);
     }
 
+    @Override
+    public void incrementView(Long reportId) {
+
+        CleanupAssignment assignment = assignmentRepository
+                .findCompletedVerifiedAssignmentByReportId(reportId)
+                .orElseThrow(() -> new ResourceNotFoundException("Completed AI-verified cleanup not found."));
+
+        publicFeedAnalyticsService.incrementViewCount(assignment);
+    }
+
+    @Override
+    public void incrementLike(Long reportId) {
+
+        CleanupAssignment assignment = assignmentRepository
+                .findCompletedVerifiedAssignmentByReportId(reportId)
+                .orElseThrow(() -> new ResourceNotFoundException("Completed AI-verified cleanup not found."));
+
+        publicFeedAnalyticsService.incrementLikeCount(assignment);
+    }
+
+    @Override
+    public void incrementShare(Long reportId) {
+
+        CleanupAssignment assignment = assignmentRepository
+                .findCompletedVerifiedAssignmentByReportId(reportId)
+                .orElseThrow(() -> new ResourceNotFoundException("Completed AI-verified cleanup not found."));
+
+        publicFeedAnalyticsService.incrementShareCount(assignment);
+    }
+
     /**
      * Converts CleanupAssignment into PublicFeedResponse.
      */
     private PublicFeedResponse mapToResponse(CleanupAssignment assignment) {
+        // Community appreciation analytics
+        PublicFeedAnalytics analytics = publicFeedAnalyticsService.getAnalytics(assignment);
 
         return PublicFeedResponse.builder()
 
@@ -79,6 +114,11 @@ public class PublicFeedServiceImpl implements PublicFeedService {
                 .aiVerified(assignment.getAiVerified())
                 .aiConfidence(assignment.getAiConfidence())
                 .aiRemarks(assignment.getAiRemarks())
+
+                // Public Feed Analytics
+                .viewCount(analytics.getViewCount())
+                .likeCount(analytics.getLikeCount())
+                .shareCount(analytics.getShareCount())
 
                 .build();
     }

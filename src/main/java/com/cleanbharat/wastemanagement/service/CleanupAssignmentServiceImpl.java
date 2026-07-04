@@ -13,6 +13,7 @@ import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
+import com.cleanbharat.wastemanagement.service.PublicFeedAnalyticsService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import com.cleanbharat.wastemanagement.dto.AIValidationResponse;
@@ -40,6 +41,9 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
     // Reward service
     private final RewardService rewardService;
+
+    // Public Feed Analytics
+    private final PublicFeedAnalyticsService publicFeedAnalyticsService;
 
     @Override
     public void createDefaultAssignment(GarbageReport report) {
@@ -355,6 +359,9 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
          * 2. Updating total reward points
          */
         rewardService.rewardCleaner(assignment);
+
+        // Initialize Public Feed Analytics
+        publicFeedAnalyticsService.initializeAnalytics(assignment);
     }
 
     /**

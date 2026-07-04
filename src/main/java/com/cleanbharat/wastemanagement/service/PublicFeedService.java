@@ -11,4 +11,13 @@ public interface PublicFeedService {
 
     // Returns one completed cleanup by report ID
     PublicFeedResponse getPublicFeedByReportId(Long reportId);
+
+    // Increment view count
+    void incrementView(Long reportId);
+
+    // Increment like count
+    void incrementLike(Long reportId);
+
+    // Increment share count
+    void incrementShare(Long reportId);
 }
