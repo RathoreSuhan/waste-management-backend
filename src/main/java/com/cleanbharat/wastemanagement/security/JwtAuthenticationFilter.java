@@ -11,6 +11,9 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 
 @Component
 @RequiredArgsConstructor
@@ -29,44 +32,92 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         final String jwt;
         final String email;
 
-        // No JWT found
-        if(authHeader == null || !authHeader.startsWith("Bearer ")) {
+        // No Authorization header → continue the request
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // Extract JWT
+        // Extract JWT token
         jwt = authHeader.substring(7);
 
-        // Extract Email
-        email = jwtService.extractUsername(jwt);
+        try {
 
-        if(email != null &&
-                SecurityContextHolder
-                        .getContext()
-                        .getAuthentication() == null) {
+            // Extract email from JWT
+            email = jwtService.extractUsername(jwt);
 
-            UserDetails userDetails = userDetailsService.loadUserByUsername(email);
+            // Authenticate only if SecurityContext is still empty
+            if (email != null &&
+                    SecurityContextHolder.getContext().getAuthentication() == null) {
 
-            if(jwtService.validateToken(jwt, userDetails.getUsername())) {
-                UsernamePasswordAuthenticationToken authToken =
-                        new UsernamePasswordAuthenticationToken(
-                                userDetails,
-                                null,
-                                userDetails.getAuthorities()
-                        );
+                UserDetails userDetails =
+                        userDetailsService.loadUserByUsername(email);
 
-                authToken.setDetails(
-                        new WebAuthenticationDetailsSource()
-                                .buildDetails(request)
-                );
+                // Validate token before authenticating
+                if (jwtService.validateToken(jwt, userDetails.getUsername())) {
 
-                SecurityContextHolder
-                        .getContext()
-                        .setAuthentication(authToken);
+                    UsernamePasswordAuthenticationToken authToken =
+                            new UsernamePasswordAuthenticationToken(
+                                    userDetails,
+                                    null,
+                                    userDetails.getAuthorities()
+                            );
+
+                    authToken.setDetails(
+                            new WebAuthenticationDetailsSource()
+                                    .buildDetails(request)
+                    );
+
+                    // Store authenticated user
+                    SecurityContextHolder
+                            .getContext()
+                            .setAuthentication(authToken);
+                }
             }
+
+            // Continue request
+            filterChain.doFilter(request, response);
+
         }
 
-        filterChain.doFilter(request, response);
+        // JWT has expired
+        catch (ExpiredJwtException ex) {
+
+            sendUnauthorizedResponse(
+                    response,
+                    "JWT token has expired. Please log in again."
+            );
+        }
+
+        // Invalid JWT (signature, malformed, etc.)
+        catch (JwtException ex) {
+
+            sendUnauthorizedResponse(
+                    response,
+                    "Invalid JWT token."
+            );
+        }
+    }
+
+    /**
+     * Sends a standard JSON response for authentication failures.
+     */
+    private void sendUnauthorizedResponse(
+            HttpServletResponse response,
+            String message
+    ) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json");
+
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        objectMapper.writeValue(
+                response.getWriter(),
+                java.util.Map.of(
+                        "status", 401,
+                        "message", message
+                )
+        );
     }
 }

@@ -32,4 +32,12 @@ public class RegisterRequest {
 
     // Optional (NGO / PRIVATE / MUNICIPAL)
     private String organizationName;
+
+    // User's state
+    @NotBlank(message = "State is required")
+    private String state;
+
+    // User's city
+    @NotBlank(message = "City is required")
+    private String city;
 }

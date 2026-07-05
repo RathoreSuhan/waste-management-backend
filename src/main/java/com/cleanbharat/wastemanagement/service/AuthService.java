@@ -5,6 +5,7 @@ import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.exception.*;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
+import com.cleanbharat.wastemanagement.util.LocationUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,7 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+
 
     public String register(RegisterRequest request) {
         // Check if email already exists
@@ -43,6 +45,8 @@ public class AuthService {
                 .role(request.getRole())
                 .cleanerType(request.getCleanerType())
                 .organizationName(request.getOrganizationName())
+                .state(LocationUtil.normalizeLocation(request.getState()))
+                .city(LocationUtil.normalizeLocation(request.getCity()))
                 .rewardPoints(0)
                 .build();
 

@@ -68,4 +68,15 @@ public interface CleanupAssignmentRepository extends JpaRepository<CleanupAssign
     Optional<CleanupAssignment> findCompletedVerifiedAssignmentByReportId(
             @Param("reportId") Long reportId
     );
+
+    /**
+     * Total completed cleanups performed by a cleaner.
+     */
+    long countByCleanerAndStatus(User cleaner, AssignmentStatus status
+    );
+
+    /**
+     * Total AI verified cleanups performed by a cleaner.
+     */
+    long countByCleanerAndAiVerifiedTrue(User cleaner);
 }

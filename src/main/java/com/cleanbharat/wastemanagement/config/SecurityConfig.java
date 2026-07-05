@@ -29,9 +29,21 @@ public class SecurityConfig {
                 // Authorization Rules
                 .authorizeHttpRequests(auth -> auth
 
-                        // Public APIs
-                        .requestMatchers("/api/auth/**", "/api/files/**","/api/public-feed/**")
-                        .permitAll()
+                        // Public APIs accessible without login
+                        .requestMatchers(
+                                "/api/auth/**",
+                                "/api/files/**",
+                                "/api/public-feed/**",
+
+                                // National leaderboard
+                                "/api/leaderboard",
+
+                                // State leaderboard
+                                "/api/leaderboard/state/**",
+
+                                // City leaderboard
+                                "/api/leaderboard/city/**"
+                        ).permitAll()
 
                         // Admin Only APIs
                         .requestMatchers("/api/municipal-corporations/**")

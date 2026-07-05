@@ -18,6 +18,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import java.util.List;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -83,6 +84,7 @@ public class CommentServiceImpl implements CommentService {
         return mapToResponse(savedReply);
     }
 
+    @Transactional(readOnly = true)
     @Override
     public List<CommentResponse> getCommentsByReport(Long reportId) {
 
@@ -90,7 +92,7 @@ public class CommentServiceImpl implements CommentService {
                         .orElseThrow(() -> new ResourceNotFoundException("Report not found"));
 
         return commentRepository
-                .findByReportIdAndParentCommentIsNull(report.getId())
+                .findCommentTreeByReportId(reportId)
                 .stream()
                 .map(this::mapToResponse)
                 .toList();

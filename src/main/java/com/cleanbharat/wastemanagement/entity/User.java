@@ -46,6 +46,14 @@ public class User {
     // Organization name
     private String organizationName;
 
+    // State where the user belongs
+    @Column(nullable = false)
+    private String state;
+
+    // City where the user belongs
+    @Column(nullable = false)
+    private String city;
+
     @OneToMany(mappedBy = "cleaner")
     @Builder.Default
     private List<CleanupAssignment> cleanupAssignments = new ArrayList<>();
