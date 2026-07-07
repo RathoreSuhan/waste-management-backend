@@ -51,12 +51,42 @@ public interface UserRepository extends JpaRepository<User, Long> {
     );
 
     /**
-     * Returns Top 10 cleaners
-     * belonging to a city.
+     * Returns Top 10 cleaners belonging to a city.
      */
     List<User> findTop10ByRoleAndCityOrderByRewardPointsDesc(
             Role role,
             String city
     );
 
+
+    /**
+     * Counts users belonging to a specific role.
+     */
+    long countByRole(Role role);
+
+
+    /**
+     * Returns all users having the given role.
+     */
+    List<User> findByRole(Role role);
+
+
+    /**
+     * Search users by name or email.
+     */
+    List<User> findByNameContainingIgnoreCaseOrEmailContainingIgnoreCase(
+            String name,
+            String email
+    );
+
+
+    /**
+     * Search users by role and keyword.
+     */
+    List<User> findByRoleAndNameContainingIgnoreCaseOrRoleAndEmailContainingIgnoreCase(
+            Role role,
+            String name,
+            Role roleAgain,
+            String email
+    );
 }

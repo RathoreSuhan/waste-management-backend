@@ -1,6 +1,10 @@
 package com.cleanbharat.wastemanagement.repository;
 
 import com.cleanbharat.wastemanagement.entity.Comment;
+import com.cleanbharat.wastemanagement.entity.User;
+import com.cleanbharat.wastemanagement.entity.GarbageReport;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -44,4 +48,32 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
             """)
     long countReplies();
 
+    /**
+     * Number of comments written by a user.
+     */
+    long countByUser(User user);
+
+
+    /**
+     * Deletes all comments of a report.
+     * Replies are automatically removed because of orphanRemoval.
+     */
+    @Modifying
+    @Transactional
+    int deleteByReport(GarbageReport report);
+
+    /**
+     * Deletes all comments written by a user.
+     */
+    @Modifying
+    @Transactional
+    int deleteByUser(User user);
+
+    /**
+     * Checks whether a report has comments.
+     */
+    boolean existsByReport(GarbageReport report);
+
+
+    boolean existsByUser(User user);
 }

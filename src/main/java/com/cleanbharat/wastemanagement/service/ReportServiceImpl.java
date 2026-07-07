@@ -10,6 +10,7 @@ import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.enums.Role;
+import com.cleanbharat.wastemanagement.mapper.ReportMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -25,6 +26,8 @@ public class ReportServiceImpl implements ReportService {
     private final UserRepository userRepository; // user repo
     private final CloudinaryService cloudinaryService; // cloudinary service for image upload
     private final CleanupAssignmentService cleanupAssignmentService; // service to create cleanup assignment
+    private final ReportMapper reportMapper; // Shared mapper for Report -> DTO conversion
+
 
     @Override
     public ReportResponse createReport(CreateReportRequest request, MultipartFile image) {
@@ -62,14 +65,14 @@ public class ReportServiceImpl implements ReportService {
         // Automatically create cleanup assignment
         cleanupAssignmentService.createDefaultAssignment(savedReport);
 
-        return mapToResponse(savedReport);
+        return reportMapper.toResponse(savedReport);
     }
 
     @Override
     public List<ReportResponse> getAllReports() {
         return reportRepository.findAll()
                 .stream()
-                .map(this::mapToResponse) // entity -> dto
+                .map(reportMapper::toResponse) // entity -> dto
                 .toList();
     }
 
@@ -79,7 +82,7 @@ public class ReportServiceImpl implements ReportService {
                 reportRepository.findById(id)
                         .orElseThrow(() -> new ResourceNotFoundException("Report not found"));
 
-        return mapToResponse(report);
+        return reportMapper.toResponse(report);
     }
 
     @Override
@@ -92,29 +95,7 @@ public class ReportServiceImpl implements ReportService {
 
         return reportRepository.findByUser(user)
                 .stream()
-                .map(this::mapToResponse) // entity -> dto
+                .map(reportMapper::toResponse) // entity -> dto
                 .toList();
-    }
-
-    private ReportResponse mapToResponse(GarbageReport report) {
-
-        return ReportResponse.builder()
-                .id(report.getId()) // report id
-                .title(report.getTitle()) // title
-                .description(report.getDescription()) // description
-                .latitude(report.getLatitude()) // GPS latitude
-                .longitude(report.getLongitude()) // GPS longitude
-                .address(report.getAddress()) // full address
-                .landmark(report.getLandmark()) // nearby landmark
-                .city(report.getCity()) // city
-                .state(report.getState()) // state
-                .pincode(report.getPincode()) // postal code
-                .imageUrl(report.getImageUrl()) // cloudinary image
-                .status(report.getStatus().name()) // enum -> String
-                .urgencyScore(report.getUrgencyScore()) // average citizen rating
-                .engagementScore(report.getEngagementScore()) // urgency + discussion score
-                .reportedBy(report.getUser().getName()) // citizen name
-                .createdAt(report.getCreatedAt()) // creation timestamp
-                .build();
     }
 }

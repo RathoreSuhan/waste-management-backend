@@ -79,4 +79,14 @@ public interface CleanupAssignmentRepository extends JpaRepository<CleanupAssign
      * Total AI verified cleanups performed by a cleaner.
      */
     long countByCleanerAndAiVerifiedTrue(User cleaner);
+
+    /**
+     * Counts AI verified cleanups.
+     */
+    long countByAiVerifiedTrue();
+
+    /**
+     * Checks whether a cleaner has any cleanup assignments.
+     */
+    boolean existsByCleaner(User cleaner);
 }

@@ -49,13 +49,16 @@ public class SecurityConfig {
                         .requestMatchers("/api/municipal-corporations/**")
                         .hasRole("ADMIN")
 
+                        // Admin Portal APIs
+                        .requestMatchers("/api/admin/**")
+                        .hasRole("ADMIN")
+
                         // Citizen Only APIs
                         .requestMatchers("/api/votes/**")
                         .hasRole("CITIZEN")
 
                         // All other APIs require login
-                        .anyRequest()
-                        .authenticated()
+                        .anyRequest().authenticated()
                 )
 
                 .addFilterBefore(

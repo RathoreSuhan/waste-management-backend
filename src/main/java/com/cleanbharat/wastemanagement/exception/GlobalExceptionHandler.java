@@ -4,6 +4,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice // global handler
 public class GlobalExceptionHandler {
@@ -99,6 +100,30 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleAIServiceUnavailableException(AIServiceUnavailableException ex) {
         ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.SERVICE_UNAVAILABLE.value());
         return new ResponseEntity<>(error, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    @ExceptionHandler(UserDeletionNotAllowedException.class)
+    public ResponseEntity<ErrorResponse> handleUserDeletionNotAllowed(UserDeletionNotAllowedException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(RolePromotionNotAllowedException.class)
+    public ResponseEntity<ErrorResponse> handleRolePromotionNotAllowed(RolePromotionNotAllowedException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException ex){
+
+        ErrorResponse error = new ErrorResponse(
+                "Invalid value '" + ex.getValue()
+                        + "' for parameter '" + ex.getName() + "'.",
+                HttpStatus.BAD_REQUEST.value()
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
     @ExceptionHandler(Exception.class)
