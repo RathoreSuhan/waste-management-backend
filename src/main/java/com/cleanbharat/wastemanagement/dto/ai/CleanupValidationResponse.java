@@ -1,4 +1,4 @@
-package com.cleanbharat.wastemanagement.dto;
+package com.cleanbharat.wastemanagement.dto.ai;
 
 import lombok.*;
 

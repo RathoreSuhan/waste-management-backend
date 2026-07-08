@@ -2,6 +2,7 @@ package com.cleanbharat.wastemanagement.entity;
 
 import com.cleanbharat.wastemanagement.enums.ReportStatus;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.NotBlank;
 import lombok.*;
 
 import java.time.LocalDateTime;
@@ -9,17 +10,40 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "garbage_reports")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Table(
+        name = "garbage_reports",
+        indexes = {
+
+                // Used during duplicate report detection
+                @Index(
+                        name = "idx_report_pincode",
+                        columnList = "pincode"
+                ),
+
+                // Used for latitude/longitude bounding-box filtering
+                @Index(
+                        name = "idx_report_location",
+                        columnList = "latitude,longitude"
+                ),
+
+                // Used for recent-report filtering
+                @Index(
+                        name = "idx_report_created_at",
+                        columnList = "createdAt"
+                )
+        }
+)
 public class GarbageReport {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id; // report id
 
+    @NotBlank
     private String title; // report title
 
     private String description; // garbage details
@@ -55,6 +79,17 @@ public class GarbageReport {
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt; // report creation timestamp
+
+    /**
+     * Garbage category identified by AI.
+     * Example:
+     * Plastic Garbage
+     * Organic Garbage
+     * Medical Garbage
+     */
+    @Column(length = 100)
+    private String garbageCategory;
+
 
     @OneToMany(
             mappedBy = "report",

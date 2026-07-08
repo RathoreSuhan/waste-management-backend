@@ -45,6 +45,15 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
+    /**
+     * Handles AI report validation failures.
+     */
+    @ExceptionHandler(InvalidReportImageException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidReportImageException(InvalidReportImageException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
     @ExceptionHandler(InvalidVoteException.class)
     public ResponseEntity<ErrorResponse> handleInvalidVoteException(InvalidVoteException ex) {
         ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());

@@ -6,13 +6,14 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import java.io.ByteArrayInputStream;
+import java.util.Base64;
 import java.util.Iterator;
 
 /**
  * Utility methods for image processing.
  */
 @UtilityClass
-public class ImageUtils {
+public class ImageUtil {
 
     /**
      * Detects MIME type from image bytes.
@@ -22,8 +23,7 @@ public class ImageUtils {
         try (
                 ImageInputStream imageInputStream =
                         ImageIO.createImageInputStream(
-                                new ByteArrayInputStream(imageBytes)
-                        )
+                                new ByteArrayInputStream(imageBytes))
         ) {
 
             // Find suitable image reader
@@ -36,7 +36,7 @@ public class ImageUtils {
 
             ImageReader reader = readers.next();
 
-            // Format name (jpeg/png/webp...)
+            // Image format (jpeg/png/webp...)
             String format = reader.getFormatName().toLowerCase();
 
             return switch (format) {
@@ -55,6 +55,30 @@ public class ImageUtils {
         } catch (Exception ex) {
             return "application/octet-stream";
         }
+    }
+
+    /**
+     * Converts image bytes into Base64.
+     * Gemini Vision accepts images in Base64 format.
+     */
+    public String convertToBase64(byte[] imageBytes) {
+        return Base64.getEncoder().encodeToString(imageBytes);
+    }
+
+    /**
+     * Checks whether the MIME type
+     * is supported by our AI pipeline.
+     */
+    public boolean isSupportedMimeType(String mimeType) {
+
+        return switch (mimeType) {
+
+            case "image/jpeg",
+                 "image/png",
+                 "image/webp" -> true;
+
+            default -> false;
+        };
     }
 
 }

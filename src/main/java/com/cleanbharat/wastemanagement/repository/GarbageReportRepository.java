@@ -83,4 +83,45 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
             @Param("city") String city,
             @Param("state") String state
     );
+
+
+    /**
+     * Returns recent reports inside an approximate
+     * latitude/longitude bounding box for duplicate detection.
+
+     * Exact distance will be calculated later
+     * using the Haversine formula.
+     */
+    @Query("""
+        SELECT r
+        FROM GarbageReport r
+        WHERE
+                r.pincode = :pincode
+        AND
+                r.latitude BETWEEN :minLatitude AND :maxLatitude
+        AND
+                r.longitude BETWEEN :minLongitude AND :maxLongitude
+        AND
+                r.createdAt >= :createdAfter
+        """)
+    List<GarbageReport> findNearbyRecentReports(
+
+            @Param("pincode")
+            String pincode,
+
+            @Param("minLatitude")
+            Double minLatitude,
+
+            @Param("maxLatitude")
+            Double maxLatitude,
+
+            @Param("minLongitude")
+            Double minLongitude,
+
+            @Param("maxLongitude")
+            Double maxLongitude,
+
+            @Param("createdAfter")
+            java.time.LocalDateTime createdAfter
+    );
 }

@@ -17,7 +17,7 @@ public interface GeminiFeignClient {
      * Calls Gemini Vision API.
      */
     @PostMapping(value = "/v1beta/models/gemini-2.5-flash:generateContent")
-    GeminiResponse validateImages(          // Receive mapped response DTO
+    GeminiResponse generateContent(          // Receive mapped response DTO
 
               // Gemini API Key
               @RequestHeader("x-goog-api-key") String apiKey,

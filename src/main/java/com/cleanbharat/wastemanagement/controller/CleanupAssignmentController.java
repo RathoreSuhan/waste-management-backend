@@ -1,6 +1,6 @@
 package com.cleanbharat.wastemanagement.controller;
 
-import com.cleanbharat.wastemanagement.dto.CleanupValidationResponse;
+import com.cleanbharat.wastemanagement.dto.ai.CleanupValidationResponse;
 import com.cleanbharat.wastemanagement.service.CleanupAssignmentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;

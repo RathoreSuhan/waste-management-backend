@@ -1,4 +1,4 @@
-package com.cleanbharat.wastemanagement.dto;
+package com.cleanbharat.wastemanagement.dto.ai;
 
 import lombok.*;
 
@@ -7,7 +7,7 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class AIValidationResponse {
+public class AICleanupVerificationResponse {
 
     // Are both images from the same location?
     private Boolean sameLocation;

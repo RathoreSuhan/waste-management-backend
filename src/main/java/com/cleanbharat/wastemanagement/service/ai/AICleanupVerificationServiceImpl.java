@@ -1,80 +1,63 @@
-package com.cleanbharat.wastemanagement.service;
+package com.cleanbharat.wastemanagement.service.ai;
 
-import com.cleanbharat.wastemanagement.client.GeminiFeignClient;
-import com.cleanbharat.wastemanagement.config.GeminiConfig;
-import com.cleanbharat.wastemanagement.dto.AIValidationResponse;
+import com.cleanbharat.wastemanagement.dto.ai.AICleanupVerificationResponse;
 import com.cleanbharat.wastemanagement.dto.gemini.*;
-import com.cleanbharat.wastemanagement.exception.AIServiceUnavailableException;
-import com.cleanbharat.wastemanagement.util.ImageUtils;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.cleanbharat.wastemanagement.service.ImageDownloadService;
+import com.cleanbharat.wastemanagement.util.ImageUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import lombok.extern.slf4j.Slf4j;
-import java.util.Base64;
 import java.util.List;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class GeminiValidationServiceImpl implements AIValidationService {
+public class AICleanupVerificationServiceImpl implements AICleanupVerificationService {
 
-    // Calls Gemini API
-    private final GeminiFeignClient geminiFeignClient;
-
-    // Gemini configuration
-    private final GeminiConfig geminiConfig;
-
-    // Converts JSON String -> Java Object
-    private final ObjectMapper objectMapper;
+    // Shared Gemini support service
+    private final GeminiSupportService geminiSupportService;
 
     // Downloads Cloudinary images
     private final ImageDownloadService imageDownloadService;
 
+
     @Override
-    public AIValidationResponse validateImages(String beforeImageUrl, String afterImageUrl){
+    public AICleanupVerificationResponse validateImages(String beforeImageUrl, String afterImageUrl){
         /*
-         * Download BEFORE image
-         * from Cloudinary.
+         * Download BEFORE image from Cloudinary.
          */
         byte[] beforeImage = imageDownloadService.downloadImage(beforeImageUrl);
 
         /*
-         * Download AFTER image
-         * from Cloudinary.
+         * Download AFTER image from Cloudinary.
          */
         byte[] afterImage = imageDownloadService.downloadImage(afterImageUrl);
 
         /*
          * Convert images to Base64.
          *
-         * Gemini Vision prefers
-         * inline images to remote URLs.
+         * Gemini Vision prefers inline images to remote URLs.
          */
-        String beforeBase64 = Base64.getEncoder().encodeToString(beforeImage);
+        String beforeBase64 = ImageUtil.convertToBase64(beforeImage);
 
-        String afterBase64 = Base64.getEncoder().encodeToString(afterImage);
+        String afterBase64 = ImageUtil.convertToBase64(afterImage);
+
 
         // Detect BEFORE image MIME type
-        String beforeMimeType = ImageUtils.detectMimeType(beforeImage);
+        String beforeMimeType = ImageUtil.detectMimeType(beforeImage);
 
         // Detect AFTER image MIME type
-        String afterMimeType = ImageUtils.detectMimeType(afterImage);
+        String afterMimeType = ImageUtil.detectMimeType(afterImage);
 
         // Only allow formats supported by our application
-        if (!beforeMimeType.equals("image/jpeg")
-                && !beforeMimeType.equals("image/png")
-                && !beforeMimeType.equals("image/webp")) {
-
+        if (!ImageUtil.isSupportedMimeType(beforeMimeType)) {
             log.error("Unsupported BEFORE image format: {}", beforeMimeType);
-            throw new RuntimeException("Unsupported BEFORE image format.");
+            throw new RuntimeException("Unsupported BEFORE image format. We accept image in jpeg/png/webp format only.");
         }
 
-        if (!afterMimeType.equals("image/jpeg")
-                && !afterMimeType.equals("image/png")
-                && !afterMimeType.equals("image/webp")) {
-
+        if (!ImageUtil.isSupportedMimeType(afterMimeType)) {
             log.error("Unsupported AFTER image format: {}", afterMimeType);
-            throw new RuntimeException("Unsupported AFTER image format.");
+            throw new RuntimeException("Unsupported AFTER image format. We accept image in jpeg/png/webp format only.");
         }
 
         /*
@@ -187,15 +170,19 @@ public class GeminiValidationServiceImpl implements AIValidationService {
                         .build();
 
         // Call Gemini with retry mechanism
-        GeminiResponse response = callGeminiWithRetry(request);
+        GeminiResponse response = geminiSupportService.executeRequest(request);
 
         try {
 
             // Safely extract JSON returned by Gemini
-            String json = extractJsonResponse(response);
+            String json = geminiSupportService.extractJsonResponse(response);
 
             // Convert JSON into DTO
-            AIValidationResponse aiResponse = objectMapper.readValue(json, AIValidationResponse.class);
+            AICleanupVerificationResponse aiResponse =
+                    geminiSupportService.parseResponse(
+                            json,
+                            AICleanupVerificationResponse.class
+                    );
 
             // Validate mandatory fields
             validateAiResponse(aiResponse);
@@ -208,50 +195,13 @@ public class GeminiValidationServiceImpl implements AIValidationService {
         }
     }
 
-    /**
-     * Validates Gemini response before parsing.
-     */
-    private String extractJsonResponse(GeminiResponse response) {
 
-        // Response must not be null
-        if (response == null) {
-            throw new RuntimeException("Gemini returned no response.");
-        }
-
-        // Candidate list must exist
-        if (response.getCandidates() == null || response.getCandidates().isEmpty()) {
-            throw new RuntimeException("Gemini returned no candidates.");
-        }
-
-        // Content must exist
-        GeminiContentResponse content = response.getCandidates()
-                        .getFirst()
-                        .getContent();
-
-        if (content == null || content.getParts() == null || content.getParts().isEmpty()) {
-            throw new RuntimeException("Gemini returned empty content.");
-        }
-
-        // AI generated text
-        String json = content.getParts()
-                        .getFirst()
-                        .getText();
-
-        if (json == null || json.isBlank()) {
-            throw new RuntimeException("Gemini returned an empty response.");
-        }
-
-        // Remove Markdown if present
-        return json.replace("```json", "")
-                .replace("```", "")
-                .trim();
-    }
 
     /**
      * Ensures the AI response contains
      * all required fields.
      */
-    private void validateAiResponse(AIValidationResponse response) {
+    private void validateAiResponse(AICleanupVerificationResponse response) {
 
         if (response.getSameLocation() == null) {
             throw new RuntimeException("AI response missing sameLocation.");
@@ -268,48 +218,5 @@ public class GeminiValidationServiceImpl implements AIValidationService {
         if (response.getRemarks() == null || response.getRemarks().isBlank()) {
             throw new RuntimeException("AI response missing remarks.");
         }
-    }
-
-    /**
-     * Calls Gemini API with retry support.
-     */
-    private GeminiResponse callGeminiWithRetry(GeminiRequest request) {
-
-        // Maximum retry attempts
-        final int maxAttempts = 3;
-
-        Exception lastException = null;
-
-        // Retry loop
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-
-            try {
-
-                // Call Gemini
-                return geminiFeignClient.validateImages(geminiConfig.getApiKey(), request);
-            } catch (Exception ex) {
-
-                // Remember latest exception
-                lastException = ex;
-
-                log.warn("Gemini API attempt {} failed.", attempt, ex);
-
-                // No sleep after last attempt
-                if (attempt < maxAttempts) {
-
-                    try {
-
-                        // Small delay before retry
-                        Thread.sleep(1000);
-
-                    } catch (InterruptedException interruptedException) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-        }
-
-        // All retries failed
-        throw new AIServiceUnavailableException("AI verification is temporarily unavailable. Please try again in a few minutes.", lastException);
     }
 }

@@ -1,7 +1,7 @@
 package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.CleanupAssignmentResponse;
-import com.cleanbharat.wastemanagement.dto.CleanupValidationResponse;
+import com.cleanbharat.wastemanagement.dto.ai.CleanupValidationResponse;
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
@@ -13,10 +13,10 @@ import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
-import com.cleanbharat.wastemanagement.service.PublicFeedAnalyticsService;
+import com.cleanbharat.wastemanagement.service.ai.AICleanupVerificationService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import com.cleanbharat.wastemanagement.dto.AIValidationResponse;
+import com.cleanbharat.wastemanagement.dto.ai.AICleanupVerificationResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
@@ -37,7 +37,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
     private final CloudinaryService cloudinaryService;
 
     // AI validation service (Gemini implementation behind interface)
-    private final AIValidationService aiValidationService;
+    private final AICleanupVerificationService aiCleanupVerificationService;
 
     // Reward service
     private final RewardService rewardService;
@@ -186,7 +186,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
          * vs
          * AFTER image
          */
-        AIValidationResponse aiResponse = aiValidationService.validateImages(
+        AICleanupVerificationResponse aiResponse = aiCleanupVerificationService.validateImages(
                         assignment.getReport().getImageUrl(),
                         cleanupImageUrl
                 );

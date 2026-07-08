@@ -1,7 +1,7 @@
 package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.CleanupAssignmentResponse;
-import com.cleanbharat.wastemanagement.dto.CleanupValidationResponse;
+import com.cleanbharat.wastemanagement.dto.ai.CleanupValidationResponse;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import org.springframework.web.multipart.MultipartFile;
 
