@@ -151,13 +151,40 @@ public class AIReportValidationServiceImpl implements AIReportValidationService 
         
                 Never guess.
         
+                If garbage is NOT detected:
+                
+                garbageDetected = false
+                
+                validReportImage = false
+                
+                garbageCategory = null
+                
+                severity = null
+                
+                Return the confidence of your classification.
+                
+                Example:
+                
+                {
+                  "garbageDetected": false,
+                  "validReportImage": false,
+                  "confidence": 0.95,
+                  "garbageCategory": null,
+                  "severity": null,
+                  "remarks": "No garbage is visible in the image."
+                }
+                
                 If uncertain:
-        
-                garbageDetected=false
-        
-                validReportImage=false
-        
+                
+                garbageDetected = false
+                
+                validReportImage = false
+                
                 confidence below 0.50
+                
+                garbageCategory = null
+                
+                severity = null
                 """;
 
             /*
@@ -206,6 +233,8 @@ public class AIReportValidationServiceImpl implements AIReportValidationService 
 
                 // Extract JSON returned by Gemini
                 String json = geminiSupportService.extractJsonResponse(response);
+
+                log.info("Gemini Raw JSON:\n{}", json);
 
                 // Convert JSON into DTO
                 AIReportValidationResponse aiResponse =
@@ -269,10 +298,22 @@ public class AIReportValidationServiceImpl implements AIReportValidationService 
             );
         }
 
-        if (response.getSeverity() == null) {
-            throw new InvalidReportImageException(
-                    "AI response missing severity."
-            );
+        /*
+         * Severity and garbage category are required
+         * only when garbage is actually detected.
+         */
+        if (response.getGarbageDetected()) {
+            if (response.getGarbageCategory() == null || response.getGarbageCategory().isBlank()) {
+                throw new InvalidReportImageException(
+                        "AI response missing garbageCategory."
+                );
+            }
+
+            if (response.getSeverity() == null) {
+                throw new InvalidReportImageException(
+                        "AI response missing severity."
+                );
+            }
         }
 
         if (response.getRemarks() == null || response.getRemarks().isBlank()) {

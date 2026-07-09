@@ -11,13 +11,19 @@ import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.mapper.ReportMapper;
+import com.cleanbharat.wastemanagement.dto.ai.AIReportValidationResponse;
+import com.cleanbharat.wastemanagement.service.ai.AIReportValidationService;
+import com.cleanbharat.wastemanagement.service.location.ReportDuplicateValidationService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
+import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor // constructor injection
 public class ReportServiceImpl implements ReportService {
@@ -27,45 +33,97 @@ public class ReportServiceImpl implements ReportService {
     private final CloudinaryService cloudinaryService; // cloudinary service for image upload
     private final CleanupAssignmentService cleanupAssignmentService; // service to create cleanup assignment
     private final ReportMapper reportMapper; // Shared mapper for Report -> DTO conversion
+    private final AIReportValidationService aiReportValidationService; // AI validation
+    private final ReportDuplicateValidationService reportDuplicateValidationService; // Duplicate validation
 
 
+    @Transactional
     @Override
     public ReportResponse createReport(CreateReportRequest request, MultipartFile image) {
-        // Upload image to Cloudinary
-        String imageUrl = cloudinaryService.uploadFile(image);
 
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication(); // logged user
-        String email = authentication.getName(); // user email
+        // Logged-in user
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
-        User user = userRepository.findByEmail(email)       // find user
+        String email = authentication.getName();
+
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        // Only citizens can create garbage reports
+        // Only citizens can create reports
         if (user.getRole() != Role.ROLE_CITIZEN) {
-            throw new InvalidReportCreationException("Only citizens can create garbage reports.");
+            throw new InvalidReportCreationException(
+                    "Only citizens can create garbage reports."
+            );
         }
 
-        GarbageReport report = GarbageReport.builder()
-                .title(request.getTitle()) // report title
-                .description(request.getDescription()) // garbage details
-                .latitude(request.getLatitude()) // GPS latitude
-                .longitude(request.getLongitude()) // GPS longitude
-                .address(request.getAddress()) // full address
-                .landmark(request.getLandmark()) // nearby landmark
-                .city(request.getCity()) // city name
-                .state(request.getState()) // state name
-                .pincode(request.getPincode()) // postal code
-                .imageUrl(imageUrl) // cloudinary image URL
-                .status(ReportStatus.PENDING) // default status
-                .user(user) // report owner
-                .build();
+        /*
+         * Step 1
+         * AI validates uploaded image.
+         */
+        AIReportValidationResponse aiResponse = aiReportValidationService.validateReportImage(image);
 
-        GarbageReport savedReport = reportRepository.save(report); // save report
+        /*
+         * Step 2
+         * Prevent duplicate reports.
+         */
+        reportDuplicateValidationService.validateNoDuplicateReport(request);
 
-        // Automatically create cleanup assignment
-        cleanupAssignmentService.createDefaultAssignment(savedReport);
 
-        return reportMapper.toResponse(savedReport);
+        String imageUrl = null;
+        try {
+            /*
+             * Step 3
+             * Upload image only after all validations pass.
+             */
+            imageUrl = cloudinaryService.uploadFile(image);
+
+            /*
+             * Step 4
+             * Create report entity.
+             */
+            GarbageReport report = GarbageReport.builder()
+                    .title(request.getTitle())
+                    .description(request.getDescription())
+                    .latitude(request.getLatitude())
+                    .longitude(request.getLongitude())
+                    .address(request.getAddress())
+                    .landmark(request.getLandmark())
+                    .city(request.getCity())
+                    .state(request.getState())
+                    .pincode(request.getPincode())
+
+                    // AI detected garbage category
+                    .garbageCategory(aiResponse.getGarbageCategory())
+
+                    .imageUrl(imageUrl)
+                    .status(ReportStatus.PENDING)
+                    .user(user)
+                    .build();
+
+            /*
+             * Step 5
+             * Save report.
+             */
+            GarbageReport savedReport = reportRepository.save(report);
+            log.info("Creating cleanup assignment for report {}", savedReport.getId());
+
+            /*
+             * Step 6
+             * Automatically create cleanup assignment.
+             */
+            cleanupAssignmentService.createDefaultAssignment(savedReport);
+            log.info("Cleanup assignment created successfully.");
+
+            return reportMapper.toResponse(savedReport);
+        }catch (Exception ex) {
+
+            // Database transaction will roll back automatically
+            // Remove uploaded image from Cloudinary
+            if (imageUrl != null) {
+                cloudinaryService.deleteFile(imageUrl);
+            }
+            throw ex;
+        }
     }
 
     @Override

@@ -12,7 +12,6 @@ public class CreateReportRequest {
     @NotBlank(message = "Title is required")
     private String title; // report title
 
-    @NotBlank(message = "Description is required")
     private String description; // garbage details
 
     @NotNull(message = "Latitude is required")

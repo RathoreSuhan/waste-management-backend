@@ -84,7 +84,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         }
 
         CleanupAssignment assignment = assignmentRepository.findById(assignmentId)
-                        .orElseThrow(() -> new ResourceNotFoundException("Assignment not found"));
+                .orElseThrow(() -> new ResourceNotFoundException("Assignment not found"));
 
         if (assignment.getCleaner() != null) {
             throw new AssignmentAlreadyClaimedException("Assignment already claimed.");
@@ -94,9 +94,17 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
             throw new InvalidAssignmentStateException("Only pending assignments can be claimed.");
         }
 
+        /*
+         * Ensure cleaner belongs to the same
+         * city and state as the garbage report.
+         */
+        validateCleanerLocation(cleaner, assignment.getReport());
+
+        // Claim assignment
         assignment.setCleaner(cleaner);
         assignment.setStatus(AssignmentStatus.CLAIMED);
         assignment.setClaimedAt(LocalDateTime.now());
+
         assignmentRepository.save(assignment);
     }
 
@@ -173,6 +181,22 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
          */
         if (assignment.getStatus() != AssignmentStatus.IN_PROGRESS) {
             throw new CleanupNotStartedException("Cleanup must be started before uploading the completion image.");
+        }
+
+        /*
+         * Cleaner may upload multiple images until
+         * AI successfully verifies the cleanup.
+         *
+         * To avoid leaving unused images in Cloudinary,
+         * delete the previous uploaded cleanup image
+         * before uploading the new one.
+         */
+        if (assignment.getCleanupImageUrl() != null
+                && !assignment.getCleanupImageUrl().isBlank()) {
+
+            cloudinaryService.deleteFile(
+                    assignment.getCleanupImageUrl()
+            );
         }
 
         // Upload cleaned image to Cloudinary
@@ -272,9 +296,31 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
     @Override
     public List<CleanupAssignmentResponse> getPendingAssignments() {
-        return assignmentRepository.findByCleanerIsNullAndStatus(AssignmentStatus.PENDING)
+
+        // Logged-in cleaner
+        User cleaner = getLoggedInCleaner();
+
+        return assignmentRepository
+                .findByCleanerIsNullAndStatus(AssignmentStatus.PENDING)
                 .stream()
+
+                // Same state
+                .filter(assignment ->
+                        cleaner.getState().equalsIgnoreCase(
+                                assignment.getReport().getState()
+                        )
+                )
+
+                // Same city
+                .filter(assignment ->
+                        cleaner.getCity().equalsIgnoreCase(
+                                assignment.getReport().getCity()
+                        )
+                )
+
+                // Entity -> DTO
                 .map(this::mapToResponse)
+
                 .toList();
     }
 
@@ -320,19 +366,38 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
     @Override
     public List<CleanupAssignmentResponse> getNearbyAssignments() {
 
+        // Logged-in cleaner
+        User cleaner = getLoggedInCleaner();
+
         /*
          * Current implementation:
-         * Return all pending assignments.
+         * Nearby means same city & state.
          *
          * Future implementation:
-         * Use cleaner GPS location and Google Maps
-         * to return nearest pending assignments.
+         * Filter further using cleaner GPS
+         * and sort by distance.
          */
-
         return assignmentRepository
                 .findByCleanerIsNullAndStatus(AssignmentStatus.PENDING)
                 .stream()
+
+                // Same state
+                .filter(assignment ->
+                        cleaner.getState().equalsIgnoreCase(
+                                assignment.getReport().getState()
+                        )
+                )
+
+                // Same city
+                .filter(assignment ->
+                        cleaner.getCity().equalsIgnoreCase(
+                                assignment.getReport().getCity()
+                        )
+                )
+
+                // Entity -> DTO
                 .map(this::mapToResponse)
+
                 .toList();
     }
 
@@ -385,6 +450,29 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         }
         return cleaner;
     }
+
+
+    /**
+     * Ensures that a cleaner can only claim
+     * assignments within their own city and state.
+     */
+    private void validateCleanerLocation(User cleaner, GarbageReport report){
+
+        // State must match
+        if (!cleaner.getState().equalsIgnoreCase(report.getState())) {
+            throw new UnauthorizedAssignmentAccessException(
+                    "You can only claim cleanup assignments within your assigned state."
+            );
+        }
+
+        // City must match
+        if (!cleaner.getCity().equalsIgnoreCase(report.getCity())) {
+            throw new UnauthorizedAssignmentAccessException(
+                    "You can only claim cleanup assignments within your assigned city."
+            );
+        }
+    }
+
 
     /**
      * Converts CleanupAssignment entity into Dashboard DTO.

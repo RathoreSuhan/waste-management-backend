@@ -2,6 +2,7 @@ package com.cleanbharat.wastemanagement.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import com.cleanbharat.wastemanagement.dto.ai.DuplicateReportResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -52,6 +53,41 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleInvalidReportImageException(InvalidReportImageException ex) {
         ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handles duplicate garbage report submissions.
+     */
+    @ExceptionHandler(DuplicateReportException.class)
+    public ResponseEntity<DuplicateReportResponse> handleDuplicateReportException(DuplicateReportException ex) {
+
+        DuplicateReportResponse response =
+                DuplicateReportResponse.builder()
+
+                        // Duplicate detected
+                        .duplicate(true)
+
+                        // Friendly message
+                        .message(ex.getMessage())
+
+                        // HTTP status
+                        .status(HttpStatus.CONFLICT.value())
+
+                        // Existing nearby report
+                        .existingReportId(ex.getExistingReportId())
+
+                        // Distance from submitted location
+                        .distanceMeters(Double.valueOf(ex.getDistanceMeters()))
+
+                        // AI detected garbage category
+                        .garbageCategory(ex.getGarbageCategory())
+
+                        .build();
+
+        return new ResponseEntity<>(
+                response,
+                HttpStatus.CONFLICT
+        );
     }
 
     @ExceptionHandler(InvalidVoteException.class)
