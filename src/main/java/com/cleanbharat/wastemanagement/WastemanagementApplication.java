@@ -7,9 +7,7 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 @SpringBootApplication
 @EnableFeignClients     // Enables Feign Clients
 public class WastemanagementApplication {
-
 	public static void main(String[] args) {
 		SpringApplication.run(WastemanagementApplication.class, args);
 	}
-
 }
