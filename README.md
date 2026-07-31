@@ -311,6 +311,10 @@ Publish to Public Feed
 | Maven | Dependency Management |
 | Lombok | Boilerplate Code Reduction |
 | OpenFeign | External AI API Communication |
+| JUnit 5 | Unit & Integration Testing Framework |
+| Mockito | Mocking Framework for Unit Testing |
+| H2 Database | In-Memory Database for Integration Testing |
+| JaCoCo | Code Coverage Analysis |
 
 ---
 
@@ -338,6 +342,7 @@ Publish to Public Feed
 - Postman
 - Git
 - GitHub
+- vscode
 
 ---
 
@@ -371,14 +376,6 @@ Each layer has a dedicated responsibility:
 - **DTOs** provide secure data transfer between the backend and frontend.
 
 This architecture promotes scalability, maintainability, testability, and clean separation of concerns.
-
----
-
-# 📌 Current Project Status
-
-✅ Backend Development Completed (Phase 1 – Phase 13)
-
-🚧 Frontend Development (React + Tailwind CSS) — In Progress
 
 The backend is fully functional and production-oriented, supporting secure authentication, AI-powered validation, intelligent report management, community engagement, cleaner workflows, administrative tools, and public transparency.
 
@@ -1566,31 +1563,81 @@ app.duplicate.max-age-days=30
 
 ## Install Dependencies
 
+Download all required Maven dependencies and build the project.
+
 ```bash
 mvn clean install
 ```
+
+This command will:
+
+- Download all project dependencies
+- Compile the source code
+- Execute unit and integration tests
+- Generate the project artifact (`.jar`)
 
 ---
 
 ## Run the Application
 
+Start the Spring Boot application using Maven.
+
 ```bash
 mvn spring-boot:run
 ```
 
-Or run directly from IntelliJ IDEA using the `WasteManagementApplication` class.
+Alternatively, open the project in **IntelliJ IDEA** and run the `WasteManagementApplication` class directly.
+
+---
+
+## Run Automated Tests
+
+Execute all **Unit Tests** and **Integration Tests**.
+
+```bash
+mvn test
+```
+
+The automated test suite includes:
+
+- Unit Testing with JUnit 5
+- Mocking with Mockito
+- Integration Testing with Spring Boot Test
+- H2 In-Memory Database
+
+---
+
+## Generate Code Coverage Report
+
+Generate a **JaCoCo Code Coverage Report**.
+
+```bash
+mvn clean verify
+```
+
+After successful execution, the coverage report can be found at:
+
+```text
+target/site/jacoco/index.html
+```
+
+Open `index.html` in your browser to view detailed code coverage statistics.
 
 ---
 
 ## Verify the Application
 
-The application will be available at:
+Once the application starts successfully, it will be available at:
 
 ```text
 http://localhost:8080
 ```
 
-You can now test the REST APIs using Postman.
+You can now:
+
+- Test REST APIs using **Postman**
+- Execute Unit & Integration Tests using **Maven**
+- Review Code Coverage using **JaCoCo**
 
 ---
 
@@ -1619,9 +1666,11 @@ The APIs follow REST principles and consistently return structured JSON response
 
 # 🧪 Testing
 
-The backend has been thoroughly tested using **Postman**.
+The backend has been validated through a combination of **Manual API Testing**, **Unit Testing**, and **Integration Testing** to ensure correctness, reliability, and maintainability.
 
-Testing includes:
+## Manual API Testing
+
+The complete REST API workflow was tested using **Postman**, including:
 
 - User Registration & Login
 - JWT Authentication
@@ -1640,6 +1689,66 @@ Testing includes:
 - Admin Portal
 - Exception Handling
 - Business Validations
+
+---
+
+## Automated Testing
+
+The project also includes automated testing using modern Java testing frameworks.
+
+### Unit Testing
+
+Implemented using:
+
+- JUnit 5
+- Mockito
+
+Unit tests validate:
+
+- Service Layer Business Logic
+- Utility Methods
+- Exception Scenarios
+- AI Validation Logic
+- Reward Calculation
+- Duplicate Detection Logic
+
+---
+
+### Integration Testing
+
+Implemented using:
+
+- Spring Boot Test
+- H2 In-Memory Database
+
+Integration tests verify:
+
+- Repository Layer
+- JPA Entity Relationships
+- Database Operations
+- REST API Endpoints
+- End-to-End Business Workflows
+
+---
+
+### Code Coverage
+
+Code quality and test coverage are measured using **JaCoCo**, ensuring that critical business logic is thoroughly tested and helping identify untested code paths.
+
+---
+
+# 📈 Quality Assurance
+
+To improve software reliability and maintainability, the backend follows modern testing and quality assurance practices.
+
+- ✅ Unit Testing with JUnit 5
+- ✅ Integration Testing with Spring Boot Test & H2 Database
+- ✅ Mocking with Mockito
+- ✅ Code Coverage Analysis using JaCoCo
+- ✅ Manual API Testing using Postman
+- ✅ Centralized Exception Handling
+- ✅ Business Rule Validation
+- ✅ Layered Architecture for Better Testability
 
 ---
 
@@ -1723,7 +1832,7 @@ Although the backend is feature-rich, several exciting enhancements are planned.
 
 # 📚 What I Learned
 
-This project provided hands-on experience with building a production-oriented backend using modern Java technologies.
+This project provided hands-on experience with building a production-oriented backend using modern Java technologies while applying software engineering best practices throughout the development lifecycle.
 
 Key areas explored include:
 
@@ -1736,7 +1845,7 @@ Key areas explored include:
 - Cloudinary Integration
 - Google Gemini Vision API
 - OpenFeign
-- Role-Based Access Control
+- Role-Based Access Control (RBAC)
 - AI Prompt Engineering
 - Geospatial Algorithms
 - Haversine Distance Calculation
@@ -1745,6 +1854,12 @@ Key areas explored include:
 - Transaction Management
 - Clean Code Principles
 - Scalable Backend Design
+- Unit Testing with JUnit 5
+- Integration Testing with H2 Database
+- Mocking using Mockito
+- Code Coverage Analysis with JaCoCo
+- API Testing using Postman
+- Production-Oriented Backend Development
 
 ---
 
@@ -1785,6 +1900,10 @@ Special thanks to the open-source community and the technologies that made this 
 - Cloudinary
 - Google Gemini Vision API
 - OpenFeign
+- JUnit 5
+- Mockito
+- H2 Database
+- JaCoCo
 - Maven
 - IntelliJ IDEA
 - Postman
