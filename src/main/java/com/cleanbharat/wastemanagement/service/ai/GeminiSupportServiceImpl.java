@@ -45,7 +45,14 @@ public class GeminiSupportServiceImpl implements GeminiSupportService {
 
                 // Execute Gemini API request
                 return geminiFeignClient.generateContent(
+
+                        // Gemini Model Name
+                        geminiConfig.getModel(),
+
+                        // Gemini API Key
                         geminiConfig.getApiKey(),
+
+                        // Gemini Request DTO
                         request
                 );
 
@@ -53,7 +60,12 @@ public class GeminiSupportServiceImpl implements GeminiSupportService {
 
                 lastException = ex;
 
-                log.warn("Gemini API attempt {} failed.", attempt, ex);
+                log.warn(
+                        "Gemini API attempt {} failed for model '{}'.",
+                        attempt,
+                        geminiConfig.getModel(),
+                        ex
+                );
 
                 if (attempt < maxAttempts) {
 
