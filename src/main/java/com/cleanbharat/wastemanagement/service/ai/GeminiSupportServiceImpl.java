@@ -7,9 +7,13 @@ import com.cleanbharat.wastemanagement.dto.gemini.GeminiRequest;
 import com.cleanbharat.wastemanagement.dto.gemini.GeminiResponse;
 import com.cleanbharat.wastemanagement.exception.AIServiceUnavailableException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import feign.FeignException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Shared implementation for communicating
@@ -30,24 +34,28 @@ public class GeminiSupportServiceImpl implements GeminiSupportService {
     private final ObjectMapper objectMapper;
 
     /**
-     * Executes Gemini request with retry support.
+     * Executes Gemini requests while trying a small fallback chain when Google
+     * rejects the primary model because it is unavailable or quota-limited.
      */
     @Override
     public GeminiResponse executeRequest(GeminiRequest request) {
 
-        final int maxAttempts = 3; // Maximum retry count
+        List<String> candidateModels = new ArrayList<>();
+        candidateModels.add(geminiConfig.getModel());
+        candidateModels.addAll(geminiConfig.getFallbackModelList());
 
         Exception lastException = null;
 
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        for (int index = 0; index < candidateModels.size(); index++) {
+            String candidateModel = candidateModels.get(index);
 
             try {
 
-                // Execute Gemini API request
+                // Execute Gemini API request with the current model.
                 return geminiFeignClient.generateContent(
 
                         // Gemini Model Name
-                        geminiConfig.getModel(),
+                        candidateModel,
 
                         // Gemini API Key
                         geminiConfig.getApiKey(),
@@ -60,25 +68,27 @@ public class GeminiSupportServiceImpl implements GeminiSupportService {
 
                 lastException = ex;
 
-                log.warn(
-                        "Gemini API attempt {} failed for model '{}'.",
-                        attempt,
-                        geminiConfig.getModel(),
-                        ex
-                );
+                if (isQuotaExceeded(ex)) {
+                    log.warn("Gemini quota is exhausted for model '{}'.", candidateModel, ex);
 
-                if (attempt < maxAttempts) {
-
-                    try {
-
-                        // Small delay before next retry
-                        Thread.sleep(1000);
-
-                    } catch (InterruptedException interruptedException) {
-
-                        Thread.currentThread().interrupt();
+                    if (index < candidateModels.size() - 1) {
+                        log.warn("Trying fallback model '{}' instead.", candidateModels.get(index + 1));
+                        continue;
                     }
+
+                    throw new AIServiceUnavailableException(
+                            "Gemini is temporarily rate-limited. Please wait a moment and try again.",
+                            ex
+                    );
                 }
+
+                if (isModelUnavailable(ex) && index < candidateModels.size() - 1) {
+                    log.warn("Gemini model '{}' is unavailable. Trying fallback model '{}'.", candidateModel, candidateModels.get(index + 1), ex);
+                    continue;
+                }
+
+                log.warn("Gemini API call failed for model '{}'.", candidateModel, ex);
+                break;
             }
         }
 
@@ -86,6 +96,22 @@ public class GeminiSupportServiceImpl implements GeminiSupportService {
                 "AI verification is temporarily unavailable. Please try again in a few minutes.",
                 lastException
         );
+    }
+
+    private boolean isQuotaExceeded(Exception ex) {
+        if (ex instanceof FeignException feignException) {
+            return feignException.status() == 429;
+        }
+
+        return false;
+    }
+
+    private boolean isModelUnavailable(Exception ex) {
+        if (ex instanceof FeignException feignException) {
+            return feignException.status() == 404;
+        }
+
+        return false;
     }
 
     /**
