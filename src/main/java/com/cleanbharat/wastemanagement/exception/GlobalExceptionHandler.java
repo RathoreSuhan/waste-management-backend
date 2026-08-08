@@ -3,6 +3,7 @@ package com.cleanbharat.wastemanagement.exception;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import com.cleanbharat.wastemanagement.dto.ai.DuplicateReportResponse;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -168,6 +169,21 @@ public class GlobalExceptionHandler {
                 HttpStatus.BAD_REQUEST.value()
         );
 
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    // Handles validation errors when @Valid annotation fails on request body
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentNotValid(MethodArgumentNotValidException ex) {
+        // Get the first field error message for user-friendly feedback
+        String message = ex.getBindingResult()
+                .getFieldErrors()
+                .stream()
+                .findFirst()
+                .map(error -> error.getField() + ": " + error.getDefaultMessage())
+                .orElse("Validation failed");
+
+        ErrorResponse error = new ErrorResponse(message, HttpStatus.BAD_REQUEST.value());
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
