@@ -11,6 +11,7 @@ import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.mapper.ReportMapper;
+import com.cleanbharat.wastemanagement.util.LocationUtil;
 import com.cleanbharat.wastemanagement.dto.ai.AIReportValidationResponse;
 import com.cleanbharat.wastemanagement.service.ai.AIReportValidationService;
 import com.cleanbharat.wastemanagement.service.location.ReportDuplicateValidationService;
@@ -58,12 +59,21 @@ public class ReportServiceImpl implements ReportService {
 
         /*
          * Step 1
+         * Clean up the submitted location text.
+         *
+         * Done before anything else so the duplicate check and the saved row
+         * both work on the same values.
+         */
+        normalizeLocationFields(request);
+
+        /*
+         * Step 2
          * AI validates uploaded image.
          */
         AIReportValidationResponse aiResponse = aiReportValidationService.validateReportImage(image);
 
         /*
-         * Step 2
+         * Step 3
          * Prevent duplicate reports.
          */
         reportDuplicateValidationService.validateNoDuplicateReport(request);
@@ -72,13 +82,13 @@ public class ReportServiceImpl implements ReportService {
         String imageUrl = null;
         try {
             /*
-             * Step 3
+             * Step 4
              * Upload image only after all validations pass.
              */
             imageUrl = cloudinaryService.uploadFile(image);
 
             /*
-             * Step 4
+             * Step 5
              * Create report entity.
              */
             GarbageReport report = GarbageReport.builder()
@@ -101,14 +111,14 @@ public class ReportServiceImpl implements ReportService {
                     .build();
 
             /*
-             * Step 5
+             * Step 6
              * Save report.
              */
             GarbageReport savedReport = reportRepository.save(report);
             log.info("Creating cleanup assignment for report {}", savedReport.getId());
 
             /*
-             * Step 6
+             * Step 7
              * Automatically create cleanup assignment.
              */
             cleanupAssignmentService.createDefaultAssignment(savedReport);
@@ -123,6 +133,38 @@ public class ReportServiceImpl implements ReportService {
                 cloudinaryService.deleteFile(imageUrl);
             }
             throw ex;
+        }
+    }
+
+    /**
+     * Brings the submitted location text to a consistent shape.
+     *
+     * City and state are title-cased the same way they are for users at
+     * registration, so "kolkata", "Kolkata" and "KOLKATA" all become the one
+     * value. Reports are grouped and matched by city, so without this the
+     * same place would split into several distinct entries.
+     *
+     * Only whitespace is stripped from the address, landmark and pincode,
+     * since those are free text rather than grouping keys.
+     *
+     * Blank fields are already rejected by the bean constraints on
+     * CreateReportRequest, so city and state are safe to normalize here.
+     */
+    private void normalizeLocationFields(CreateReportRequest request) {
+
+        request.setCity(LocationUtil.normalizeLocation(request.getCity()));
+        request.setState(LocationUtil.normalizeLocation(request.getState()));
+
+        request.setAddress(request.getAddress().trim());
+        request.setPincode(request.getPincode().trim());
+
+        // Landmark is optional, so an omitted or empty value is stored as null
+        String landmark = request.getLandmark();
+
+        if (landmark == null || landmark.isBlank()) {
+            request.setLandmark(null);
+        } else {
+            request.setLandmark(landmark.trim());
         }
     }
 

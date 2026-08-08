@@ -3,6 +3,7 @@ package com.cleanbharat.wastemanagement.controller;
 import com.cleanbharat.wastemanagement.dto.CreateReportRequest;
 import com.cleanbharat.wastemanagement.dto.ReportResponse;
 import com.cleanbharat.wastemanagement.service.ReportService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,39 +17,22 @@ import java.util.List;
 public class ReportController {
     private final ReportService reportService; // service layer
 
-    @PostMapping(consumes = "multipart/form-data")      // POST /api/reports
+    /**
+     * POST /api/reports
+     *
+     * The report fields are bound straight into the DTO from the multipart
+     * form, which is what makes the bean constraints on CreateReportRequest
+     * run. Building the DTO by hand here would skip validation entirely.
+     *
+     * Form field names are unchanged, so existing clients keep working.
+     */
+    @PostMapping(consumes = "multipart/form-data")
     public ResponseEntity<ReportResponse> createReport(
-            @RequestParam String title,
-            @RequestParam String description,
-            @RequestParam Double latitude,
-            @RequestParam Double longitude,
-            @RequestParam String address,
-
-            @RequestParam(required = false)
-            String landmark,
-
-            @RequestParam String city,
-            @RequestParam String state,
-            @RequestParam String pincode,
+            @Valid @ModelAttribute CreateReportRequest request,
 
             @RequestParam("image")
             MultipartFile image
     ) {
-        CreateReportRequest request = new CreateReportRequest();
-
-        request.setTitle(title);
-        request.setDescription(description);
-
-        request.setLatitude(latitude);
-        request.setLongitude(longitude);
-
-        request.setAddress(address);
-        request.setLandmark(landmark);
-
-        request.setCity(city);
-        request.setState(state);
-        request.setPincode(pincode);
-
         ReportResponse response = reportService.createReport(request, image);
 
         return ResponseEntity.ok(response);

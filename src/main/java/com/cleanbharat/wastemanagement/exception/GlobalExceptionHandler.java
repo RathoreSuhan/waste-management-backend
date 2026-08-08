@@ -4,10 +4,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import com.cleanbharat.wastemanagement.dto.ai.DuplicateReportResponse;
 import com.cleanbharat.wastemanagement.dto.ai.ImageValidationErrorResponse;
+import org.springframework.validation.BindException;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 
 @RestControllerAdvice // global handler
@@ -211,6 +216,73 @@ public class GlobalExceptionHandler {
 
         ErrorResponse error = new ErrorResponse(message, HttpStatus.BAD_REQUEST.value());
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handles validation failures on form-data payloads bound with
+     * @Valid @ModelAttribute, such as the create-report multipart request.
+     *
+     * These raise BindException rather than MethodArgumentNotValidException,
+     * so without this handler they would fall through to the catch-all below
+     * and be reported as a 500.
+     *
+     * The constraint messages already name their field ("City is required"),
+     * so the raw field name is not prefixed here.
+     */
+    @ExceptionHandler(BindException.class)
+    public ResponseEntity<ErrorResponse> handleBindException(BindException ex) {
+
+        String message = ex.getBindingResult()
+                .getFieldErrors()
+                .stream()
+                .findFirst()
+                .map(FieldError::getDefaultMessage)
+                .orElse("Validation failed. Please check the submitted details.");
+
+        ErrorResponse error = new ErrorResponse(message, HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handles a missing file part, e.g. a report submitted without its photo.
+     */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorResponse> handleMissingRequestPart(MissingServletRequestPartException ex) {
+
+        ErrorResponse error = new ErrorResponse(
+                "Required file '" + ex.getRequestPartName() + "' is missing.",
+                HttpStatus.BAD_REQUEST.value()
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handles a missing request parameter.
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingRequestParameter(MissingServletRequestParameterException ex) {
+
+        ErrorResponse error = new ErrorResponse(
+                "Required parameter '" + ex.getParameterName() + "' is missing.",
+                HttpStatus.BAD_REQUEST.value()
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handles uploads larger than the configured multipart limit.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex) {
+
+        ErrorResponse error = new ErrorResponse(
+                "The uploaded image is too large. Please upload an image under 10MB.",
+                HttpStatus.PAYLOAD_TOO_LARGE.value()
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.PAYLOAD_TOO_LARGE);
     }
 
     /**
