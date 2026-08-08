@@ -7,6 +7,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 
 @RestControllerAdvice // global handler
 public class GlobalExceptionHandler {
@@ -183,6 +184,23 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .orElse("Validation failed");
 
+        ErrorResponse error = new ErrorResponse(message, HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Handles JSON deserialization errors (e.g., invalid enum values, malformed JSON).
+     * Provides user-friendly error messages instead of technical Jackson errors.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(HttpMessageNotReadableException ex) {
+        String message = "Invalid request format. Please check your input.";
+        
+        // Provide specific hint for enum deserialization errors
+        if (ex.getCause() != null && ex.getCause().getMessage().contains("CleanerType")) {
+            message = "Invalid cleaner type selected. Please choose from: INDIVIDUAL, NGO, PRIVATE, or MUNICIPAL.";
+        }
+        
         ErrorResponse error = new ErrorResponse(message, HttpStatus.BAD_REQUEST.value());
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
