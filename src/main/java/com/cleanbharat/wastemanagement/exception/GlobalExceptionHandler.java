@@ -3,6 +3,7 @@ package com.cleanbharat.wastemanagement.exception;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import com.cleanbharat.wastemanagement.dto.ai.DuplicateReportResponse;
+import com.cleanbharat.wastemanagement.dto.ai.ImageValidationErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -50,10 +51,34 @@ public class GlobalExceptionHandler {
 
     /**
      * Handles AI report validation failures.
+     *
+     * The rejection reason and the AI's own remarks are passed through so the
+     * citizen can be told why the photograph was refused and what to do about
+     * it, instead of only that it failed.
      */
     @ExceptionHandler(InvalidReportImageException.class)
-    public ResponseEntity<ErrorResponse> handleInvalidReportImageException(InvalidReportImageException ex) {
-        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
+    public ResponseEntity<ImageValidationErrorResponse> handleInvalidReportImageException(InvalidReportImageException ex) {
+
+        ImageValidationErrorResponse error =
+                ImageValidationErrorResponse.builder()
+
+                        // Guidance for the citizen
+                        .message(ex.getMessage())
+
+                        // HTTP status
+                        .status(HttpStatus.BAD_REQUEST.value())
+
+                        // Why the image was rejected (null for non-AI failures)
+                        .reason(ex.getReason())
+
+                        // What the AI reported seeing
+                        .aiRemarks(ex.getAiRemarks())
+
+                        // How sure the AI was
+                        .confidence(ex.getConfidence())
+
+                        .build();
+
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 

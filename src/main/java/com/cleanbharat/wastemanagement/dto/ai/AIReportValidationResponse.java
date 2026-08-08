@@ -1,6 +1,7 @@
 package com.cleanbharat.wastemanagement.dto.ai;
 
 import com.cleanbharat.wastemanagement.enums.GarbageSeverity;
+import com.cleanbharat.wastemanagement.enums.ImageRejectionReason;
 import lombok.*;
 
 /**
@@ -32,6 +33,9 @@ public class AIReportValidationResponse {
 
     // Estimated garbage severity
     private GarbageSeverity severity;
+
+    // Why the image was rejected (null when the image is acceptable)
+    private ImageRejectionReason rejectionReason;
 
     // AI explanation
     private String remarks;
