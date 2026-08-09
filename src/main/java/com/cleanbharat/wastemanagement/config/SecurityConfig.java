@@ -4,7 +4,9 @@ import com.cleanbharat.wastemanagement.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
+
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
@@ -70,6 +72,17 @@ public class SecurityConfig {
                 // Authorization Rules - Define who can access which endpoints
                 .authorizeHttpRequests(auth -> auth
 
+                        /*
+                          Declared FIRST, because rules are evaluated in order
+                          and the public GET /api/reports/* rule further down
+                          would otherwise swallow this path.
+
+                          /api/reports/my resolves the report list from the
+                          signed-in principal, so it can never be anonymous.
+                        */
+                        .requestMatchers(HttpMethod.GET, "/api/reports/my")
+                        .authenticated()
+
                         // Public endpoints - no authentication required
                         .requestMatchers(
                                 "/api/auth/**",           // Login & Register
@@ -80,6 +93,28 @@ public class SecurityConfig {
                                 "/api/leaderboard/state/**", // State leaderboard
                                 "/api/leaderboard/city/**"   // City leaderboard
                         ).permitAll()
+
+                        /*
+                          Publicly readable community data.
+
+                          Visitors browse reports, the engagement ranking and
+                          the discussion on a report without an account, which
+                          is what makes the platform's work visible to people
+                          who have not signed up yet.
+
+                          Restricted to GET on purpose. Filing a report,
+                          commenting, replying and voting all stay behind
+                          authentication via the rules below - the frontend
+                          prompts anonymous users to log in at that point.
+                        */
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/reports",                 // Report list
+                                "/api/reports/*",               // A single report
+                                "/api/comments/report/*",       // Discussion thread
+                                "/api/analytics/trending",      // Engagement ranking
+                                "/api/analytics/report/*"       // Per-report counts
+                        ).permitAll()
+
 
                         // Admin-only endpoints
                         .requestMatchers("/api/municipal-corporations/**")
