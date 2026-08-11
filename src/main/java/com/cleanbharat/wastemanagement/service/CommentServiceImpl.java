@@ -139,7 +139,9 @@ public class CommentServiceImpl implements CommentService {
                 .id(comment.getId()) // comment id
                 .message(comment.getMessage()) // comment text
                 .userName(comment.getUser().getName()) // username
+                .userRole(comment.getUser().getRole().name()) // author's role
                 .createdAt(comment.getCreatedAt()) // creation time
+
 
                 // Recursive mapping for replies
                 .replies(

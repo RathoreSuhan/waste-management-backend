@@ -1,11 +1,16 @@
 package com.cleanbharat.wastemanagement.service;
 
+import com.cleanbharat.wastemanagement.dto.LikeResponse;
 import com.cleanbharat.wastemanagement.dto.PublicFeedResponse;
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
+import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
+import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.entity.PublicFeedAnalytics;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import java.util.List;
 
@@ -18,11 +23,19 @@ public class PublicFeedServiceImpl implements PublicFeedService {
 
     private final PublicFeedAnalyticsService publicFeedAnalyticsService;
 
+    // Resolves the signed-in user, who a like belongs to
+    private final UserRepository userRepository;
+
+
     @Override
     public List<PublicFeedResponse> getPublicFeed() {
+
+        // Resolved once for the whole list rather than per story
+        User currentUser = currentUserOrNull();
+
         return assignmentRepository.findCompletedVerifiedAssignments()
                 .stream()
-                .map(this::mapToResponse) // Entity → DTO
+                .map(assignment -> mapToResponse(assignment, currentUser)) // Entity → DTO
                 .toList();
     }
 
@@ -33,8 +46,9 @@ public class PublicFeedServiceImpl implements PublicFeedService {
                 .findCompletedVerifiedAssignmentByReportId(reportId)
                 .orElseThrow(() -> new ResourceNotFoundException("Completed AI-verified cleanup not found for report id: " + reportId));
 
-        return mapToResponse(assignment);
+        return mapToResponse(assignment, currentUserOrNull());
     }
+
 
     @Override
     public void incrementView(Long reportId) {
@@ -47,14 +61,37 @@ public class PublicFeedServiceImpl implements PublicFeedService {
     }
 
     @Override
-    public void incrementLike(Long reportId) {
+    public LikeResponse toggleLike(Long reportId) {
 
         CleanupAssignment assignment = assignmentRepository
                 .findCompletedVerifiedAssignmentByReportId(reportId)
                 .orElseThrow(() -> new ResourceNotFoundException("Completed AI-verified cleanup not found."));
 
-        publicFeedAnalyticsService.incrementLikeCount(assignment);
+        /*
+         * A like has to belong to somebody.
+         *
+         * Security only permits this endpoint to signed-in callers, so
+         * reaching here without a user would mean the two have drifted
+         * apart. Failing loudly is safer than silently recording an
+         * ownerless like.
+         */
+        User user = currentUserOrNull();
+
+        if (user == null) {
+            throw new ResourceNotFoundException(
+                    "Signed-in user required to appreciate a cleanup."
+            );
+        }
+
+        boolean liked = publicFeedAnalyticsService.toggleLike(assignment, user);
+
+        return LikeResponse.builder()
+                .reportId(reportId)
+                .likeCount(publicFeedAnalyticsService.getAnalytics(assignment).getLikeCount())
+                .liked(liked)
+                .build();
     }
+
 
     @Override
     public void incrementShare(Long reportId) {
@@ -67,11 +104,44 @@ public class PublicFeedServiceImpl implements PublicFeedService {
     }
 
     /**
-     * Converts CleanupAssignment into PublicFeedResponse.
+     * The user behind the current request, or null when nobody is signed in.
+     *
+     * The feed is deliberately readable without an account, so an absent
+     * user is a normal case here and not an error. Spring represents an
+     * anonymous caller with a token named "anonymousUser" rather than with
+     * an empty context, so that name has to be excluded too - otherwise it
+     * would be looked up as though it were an email address.
      */
-    private PublicFeedResponse mapToResponse(CleanupAssignment assignment) {
+    private User currentUserOrNull() {
+
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication == null
+                || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getName())) {
+            return null;
+        }
+
+        return userRepository
+                .findByEmail(authentication.getName())
+                .orElse(null);
+    }
+
+    /**
+     * Converts CleanupAssignment into PublicFeedResponse.
+     *
+     * currentUser may be null, for a visitor reading without an account.
+     * In that case no like can belong to them, so likedByMe is false.
+     */
+    private PublicFeedResponse mapToResponse(CleanupAssignment assignment, User currentUser) {
         // Community appreciation analytics
         PublicFeedAnalytics analytics = publicFeedAnalyticsService.getAnalytics(assignment);
+
+        // Whether this reader's own like of the cleanup stands
+        boolean likedByMe = currentUser != null
+                && publicFeedAnalyticsService.hasLiked(assignment, currentUser);
+
 
         return PublicFeedResponse.builder()
 
@@ -120,6 +190,10 @@ public class PublicFeedServiceImpl implements PublicFeedService {
                 .likeCount(analytics.getLikeCount())
                 .shareCount(analytics.getShareCount())
 
+                // This reader's own appreciation
+                .likedByMe(likedByMe)
+
                 .build();
+
     }
 }

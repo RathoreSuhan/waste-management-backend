@@ -1,6 +1,8 @@
 package com.cleanbharat.wastemanagement.controller;
 
+import com.cleanbharat.wastemanagement.dto.LikeResponse;
 import com.cleanbharat.wastemanagement.dto.PublicFeedResponse;
+
 import com.cleanbharat.wastemanagement.service.PublicFeedService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -49,19 +51,22 @@ public class PublicFeedController {
         );
     }
 
-    //for increment like api
+    /**
+     * Records the signed-in user's like of a cleanup, or withdraws it.
+     *
+     * Returns the resulting state and total instead of a bare confirmation,
+     * so the page can show what actually happened. Without the total, a
+     * page could only guess by adding one locally, and two people liking
+     * at once would leave both showing the wrong number.
+     */
     @PostMapping("/{reportId}/like")
-    public ResponseEntity<SuccessResponse> incrementLike(@PathVariable Long reportId){
+    public ResponseEntity<LikeResponse> toggleLike(@PathVariable Long reportId){
 
-        publicFeedService.incrementLike(reportId);
+        LikeResponse response = publicFeedService.toggleLike(reportId);
 
-        return ResponseEntity.ok(
-                SuccessResponse.builder()
-                        .message("Like recorded successfully.")
-                        .timestamp(LocalDateTime.now())
-                        .build()
-        );
+        return ResponseEntity.ok(response);
     }
+
 
     //for increment share api
     @PostMapping("/{reportId}/share")

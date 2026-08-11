@@ -104,7 +104,9 @@ public class AdminServiceImpl implements AdminService {
 
                 // Community statistics
                 .totalComments(commentRepository.count())
-                .totalVotes(voteRepository.count())
+                // Ratings only: a row recording a like of a cleanup
+                // is not a vote
+                .totalVotes(voteRepository.countByRatingIsNotNull())
 
                 // Leaderboard
                 .topCleaner(topCleaner)
@@ -186,7 +188,8 @@ public class AdminServiceImpl implements AdminService {
         long comments = commentRepository.countByUser(user);
 
         // Total votes submitted
-        long votes = voteRepository.countByUser(user);
+        // Excludes rows that only record a like of a cleanup
+        long votes = voteRepository.countByUserAndRatingIsNotNull(user);
 
         // Convert to response DTO
         return mapToUserDetailsResponse(

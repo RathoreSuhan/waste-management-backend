@@ -70,4 +70,20 @@ public class PublicFeedResponse {
 
     // Total shares
     private Long shareCount;
+
+    /*
+      Whether the person reading this has already appreciated the cleanup.
+
+      Sent so the heart can be shown filled on a fresh page load, on any
+      device. The page previously remembered likes in browser storage,
+      which meant the same account saw a different state on a different
+      browser, and one browser applied its memory to every account that
+      used it.
+
+      False for visitors who are not signed in: a like belongs to an
+      account, so an anonymous reader cannot have given one.
+     */
+    private Boolean likedByMe;
 }
+
+

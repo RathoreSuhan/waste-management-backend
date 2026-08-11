@@ -36,6 +36,7 @@ public class UserDeletionServiceImpl implements UserDeletionService {
     //Cleanup Assignment Repository
     private final CleanupAssignmentRepository cleanupAssignmentRepository;
 
+
     @Override
     public void deleteCitizen(User citizen) {
 
@@ -59,6 +60,10 @@ public class UserDeletionServiceImpl implements UserDeletionService {
         /*
          * Step 3
          * Delete every report.
+         *
+         * The likes this citizen gave are already gone: a like is kept
+         * alongside their rating in the votes table, so deleting their
+         * votes in step 1 removed them as well.
          */
         List<GarbageReport> reports = garbageReportRepository.findByUser(citizen);
 
@@ -72,6 +77,7 @@ public class UserDeletionServiceImpl implements UserDeletionService {
          * Delete citizen.
          */
         userRepository.delete(citizen);
+
     }
 
     @Override
@@ -91,9 +97,19 @@ public class UserDeletionServiceImpl implements UserDeletionService {
         }
 
         /*
+         * A cleaner can rate reports and appreciate other people's
+         * cleanups. Both are recorded in the votes table, so removing
+         * their votes removes their likes with them.
+         */
+        if (voteRepository.existsByUser(cleaner)) {
+            voteRepository.deleteByUser(cleaner);
+        }
+
+        /*
          * Assignment cleanup is performed
          * through ReportDeletionService when
          * reports are deleted.
+
          *
          * For cleaner deletion, assignments
          * should already have been reassigned

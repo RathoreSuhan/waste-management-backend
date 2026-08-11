@@ -82,7 +82,26 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/reports/my")
                         .authenticated()
 
+                        /*
+                          Also declared before the public feed rule below,
+                          for the same ordering reason.
+
+                          Appreciating a cleanup records a like against the
+                          signed-in account, one per person per cleanup. If
+                          "/api/public-feed/**" were reached first it would
+                          admit anonymous callers, and every anonymous press
+                          would count again with nobody to attribute it to -
+                          which is how the count came to be inflatable by
+                          holding down a single button.
+
+                          Reading the feed stays open to everyone: only this
+                          one POST is restricted.
+                        */
+                        .requestMatchers(HttpMethod.POST, "/api/public-feed/*/like")
+                        .authenticated()
+
                         // Public endpoints - no authentication required
+
                         .requestMatchers(
                                 "/api/auth/**",           // Login & Register
                                 "/api/files/**",          // View uploaded images

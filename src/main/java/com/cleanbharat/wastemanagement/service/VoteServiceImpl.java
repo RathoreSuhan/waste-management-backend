@@ -74,8 +74,20 @@ public class VoteServiceImpl implements VoteService {
         // Recalculate urgency score
         List<Vote> votes = voteRepository.findByReport(report);
 
+        /*
+         * Average the ratings only.
+         *
+         * A row can exist to record that someone appreciated the cleanup
+         * and carry no rating at all. Those rows say nothing about how
+         * urgent the garbage is, so they are left out: including them
+         * would unbox a null rating and fail, and treating an absent
+         * rating as zero would drag the average down and misrepresent
+         * the urgency this report was actually given.
+         */
         double average = votes.stream()
-                        .mapToInt(Vote::getRating)
+                        .map(Vote::getRating)
+                        .filter(rating -> rating != null)
+                        .mapToInt(Integer::intValue)
                         .average()
                         .orElse(0.0);
 

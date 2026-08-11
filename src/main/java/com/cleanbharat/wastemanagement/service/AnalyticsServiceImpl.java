@@ -131,7 +131,9 @@ public class AnalyticsServiceImpl implements AnalyticsService {
         long totalReports = reportRepository.count();
 
         // Total votes submitted
-        long totalVotes = voteRepository.count();
+        // Counts ratings only: a row that merely records a like of a
+        // cleanup is not a vote and would overstate this figure.
+        long totalVotes = voteRepository.countByRatingIsNotNull();
 
         // Total top-level comments
         long totalComments = commentRepository.countTopLevelComments();

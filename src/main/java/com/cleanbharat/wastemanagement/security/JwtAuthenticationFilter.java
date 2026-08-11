@@ -24,6 +24,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     /**
      * Skip JWT validation for public endpoints.
      * Public endpoints don't require authentication, so filter shouldn't process them.
+     *
+     * The public feed is deliberately NOT skipped, even though reading it is
+     * open to everyone.
+     *
+     * Skipping a path does not merely make it public - it stops the token
+     * from being read at all, so the request arrives anonymous even when the
+     * caller sent a perfectly good one. Two things depend on knowing who is
+     * asking: liking a cleanup is recorded against an account, and each
+     * story reports whether this reader's own like stands. While this path
+     * was skipped the like endpoint was refused for everyone (SecurityConfig
+     * requires authentication, and with no entry point configured Spring
+     * answers 403), and likedByMe came back false for everybody.
+     *
+     * Running the filter costs the anonymous case nothing: a request with no
+     * Authorization header passes straight through below.
      */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -32,10 +47,36 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // Public paths that don't need JWT validation
         return path.startsWith("/api/auth/") ||     // Login & Register
                path.startsWith("/api/files/") ||    // File viewing
-               path.startsWith("/api/public-feed") ||
                path.startsWith("/api/leaderboard") ||
                path.equals("/actuator/health");     // Health check
     }
+
+    /**
+     * Whether a bad token should be tolerated rather than rejected.
+     *
+     * On endpoints that anyone may read, an expired token is not a reason to
+     * refuse the request - the caller is simply treated as a stranger and
+     * sees what a stranger sees. Rejecting instead would mean a visitor
+     * whose session quietly lapsed could no longer open a public success
+     * story at all, which is a worse outcome than an unfilled heart.
+     *
+     * Endpoints that record something against an account are excluded: there
+     * a lapsed session must be reported so the page can ask the visitor to
+     * sign in again, rather than silently dropping what they did.
+     */
+    private boolean toleratesAnonymous(HttpServletRequest request) {
+
+        String path = request.getRequestURI();
+
+        if (!path.startsWith("/api/public-feed")) {
+            return false;
+        }
+
+        // Liking belongs to an account, so it must not degrade to anonymous
+        return !("POST".equalsIgnoreCase(request.getMethod())
+                && path.endsWith("/like"));
+    }
+
 
     @Override
     protected void doFilterInternal(
@@ -99,6 +140,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // JWT has expired
         catch (ExpiredJwtException ex) {
 
+            /*
+              On a publicly readable path the request carries on without an
+              identity, so a lapsed session still sees the page. Elsewhere
+              the caller is told, so they can sign in again.
+            */
+            if (toleratesAnonymous(request)) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             sendUnauthorizedResponse(
                     response,
                     "JWT token has expired. Please log in again."
@@ -108,11 +159,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // Invalid JWT (signature, malformed, etc.)
         catch (JwtException ex) {
 
+            // Same reasoning as above
+            if (toleratesAnonymous(request)) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             sendUnauthorizedResponse(
                     response,
                     "Invalid JWT token."
             );
         }
+
     }
 
     /**

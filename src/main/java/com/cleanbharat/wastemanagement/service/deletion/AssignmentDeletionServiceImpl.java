@@ -5,6 +5,8 @@ import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.PublicFeedAnalyticsRepository;
 import com.cleanbharat.wastemanagement.repository.RewardHistoryRepository;
+import com.cleanbharat.wastemanagement.repository.VoteRepository;
+
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.service.CloudinaryService;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +29,11 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
     // Public feed analytics repository
     private final PublicFeedAnalyticsRepository analyticsRepository;
+
+    // Holds each person's rating of a report and whether they
+    // appreciated its cleanup
+    private final VoteRepository voteRepository;
+
 
     // Cloudinary service
     private final CloudinaryService cloudinaryService;
@@ -54,8 +61,26 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
         /*
          * Step 3
+         * Withdraw the likes people gave this cleanup.
+         *
+         * The report outlives the cleanup here, and a like belongs to the
+         * cleanup that earned it - leaving them standing would carry the
+         * appreciation over to whatever cleanup comes next.
+         *
+         * The urgency ratings kept alongside them describe the garbage
+         * rather than the cleanup, so those stay: only the likes are
+         * cleared, and rows left holding nothing at all are removed.
+         */
+        voteRepository.clearLikesByReport(assignment.getReport());
+
+        voteRepository.deleteEmptyRowsByReport(assignment.getReport());
+
+
+        /*
+         * Step 4
          * Reverse cleaner reward points and delete reward history.
          */
+
         rewardHistoryRepository.findByAssignment(assignment)
                 .ifPresent(rewardHistory -> {
 
@@ -76,9 +101,10 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
 
         /*
-         * Step 4
+         * Step 5
          * Delete assignment.
          */
+
         cleanupAssignmentRepository.delete(assignment);
     }
 
