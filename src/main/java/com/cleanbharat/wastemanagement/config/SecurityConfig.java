@@ -115,6 +115,28 @@ public class SecurityConfig {
                         ).permitAll()
 
 
+                        /*
+                          Municipal contact lookup for a city.
+
+                          Declared BEFORE the admin rule below, because rules
+                          are evaluated in order and the /** admin matcher
+                          would otherwise swallow this path - the same
+                          ordering trap noted on /api/reports/my above.
+
+                          Any signed-in user may read this: a citizen needs
+                          the corporation's phone number to chase their own
+                          report, and a cleaner needs it to raise an issue
+                          from the field.
+
+                          Deliberately GET and the /city/ path only. The same
+                          base path also serves POST, PUT and DELETE, so a
+                          blanket rule here would let any citizen create,
+                          edit or delete corporation records. Those stay
+                          admin-only through the matcher below.
+                        */
+                        .requestMatchers(HttpMethod.GET, "/api/municipal-corporations/city/**")
+                        .authenticated()
+
                         // Admin-only endpoints
                         .requestMatchers("/api/municipal-corporations/**")
                         .hasRole("ADMIN")
