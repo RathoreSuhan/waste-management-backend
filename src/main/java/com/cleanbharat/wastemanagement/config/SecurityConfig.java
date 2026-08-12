@@ -38,6 +38,11 @@ public class SecurityConfig {
         // Allow requests from production frontend
         configuration.addAllowedOrigin("https://waste-management-frontend-xi.vercel.app");
 
+        // New custom domain
+        configuration.addAllowedOrigin("https://cleanbharat.tech");
+
+        configuration.addAllowedOrigin("https://www.cleanbharat.tech");
+
         // Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
         configuration.addAllowedMethod("*");
 
