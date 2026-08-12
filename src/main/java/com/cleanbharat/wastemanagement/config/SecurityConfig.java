@@ -34,9 +34,9 @@ public class SecurityConfig {
 
         // Allow requests from frontend development server
         configuration.addAllowedOrigin("http://localhost:5173");
-        
-        // Also allow production frontend URL (add later when deployed)
-        // configuration.addAllowedOrigin("https://cleanbharat.com");
+
+        // Allow requests from production frontend
+        configuration.addAllowedOrigin("https://waste-management-frontend-xi.vercel.app");
 
         // Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
         configuration.addAllowedMethod("*");
