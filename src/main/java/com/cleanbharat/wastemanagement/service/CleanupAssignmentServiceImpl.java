@@ -187,17 +187,11 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
          * Cleaner may upload multiple images until
          * AI successfully verifies the cleanup.
          *
-         * To avoid leaving unused images in Cloudinary,
-         * delete the previous uploaded cleanup image
-         * before uploading the new one.
+         * The rejected image is remembered here and removed only AFTER the
+         * replacement upload succeeds, so a failed upload can never leave
+         * the assignment with no image at all.
          */
-        if (assignment.getCleanupImageUrl() != null
-                && !assignment.getCleanupImageUrl().isBlank()) {
-
-            cloudinaryService.deleteFile(
-                    assignment.getCleanupImageUrl()
-            );
-        }
+        String previousCleanupImageUrl = assignment.getCleanupImageUrl(); // Image being replaced (null on first upload)
 
         // Upload cleaned image to Cloudinary
         String cleanupImageUrl = cloudinaryService.uploadFile(image);
@@ -206,14 +200,42 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         assignment.setCleanupImageUrl(cleanupImageUrl);
 
         /*
+         * The replacement is now stored on the assignment, so the rejected
+         * image is referenced by nothing and must be destroyed in Cloudinary
+         * to avoid leaving unused files behind.
+         */
+        if (previousCleanupImageUrl != null
+                && !previousCleanupImageUrl.isBlank()
+                && !previousCleanupImageUrl.equals(cleanupImageUrl)) { // Never destroy the image just uploaded
+
+            cloudinaryService.deleteFile(previousCleanupImageUrl);
+        }
+
+        /*
          * Validate BEFORE image
          * vs
          * AFTER image
          */
-        AICleanupVerificationResponse aiResponse = aiCleanupVerificationService.validateImages(
-                        assignment.getReport().getImageUrl(),
-                        cleanupImageUrl
-                );
+        AICleanupVerificationResponse aiResponse; // Assigned by the verification call below
+
+        try {
+            aiResponse = aiCleanupVerificationService.validateImages(
+                            assignment.getReport().getImageUrl(),
+                            cleanupImageUrl
+                    );
+        } catch (RuntimeException e) {
+            /*
+             * Verification could not be performed (image download failure,
+             * AI outage, ...).
+             *
+             * This transaction rolls back, so the URL saved above never
+             * reaches the database and nothing would ever reference the new
+             * asset again. It is destroyed here to prevent that orphan.
+             */
+            cloudinaryService.deleteFile(cleanupImageUrl); // Remove the now unreferenced upload
+
+            throw e; // Keep the original failure visible to the caller
+        }
 
         /*
          * AI verification succeeds only when:
