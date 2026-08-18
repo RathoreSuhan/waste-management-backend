@@ -14,6 +14,7 @@ import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.service.ai.AICleanupVerificationService;
+import com.cleanbharat.wastemanagement.util.GeoLocationUtil; // Haversine distance helper
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import com.cleanbharat.wastemanagement.dto.ai.AICleanupVerificationResponse;
@@ -44,6 +45,14 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
     // Public Feed Analytics
     private final PublicFeedAnalyticsService publicFeedAnalyticsService;
+
+    /*
+     * Radius within which cleanup proof is accepted, in metres.
+     *
+     * Mirrored by CLEANUP_PROOF_RADIUS_METRES in the cleaner UI, which warns
+     * the cleaner before the upload. This value is the one that decides.
+     */
+    private static final double CLEANUP_PROOF_RADIUS_METERS = 50.0;
 
     @Override
     public void createDefaultAssignment(GarbageReport report) {
@@ -159,7 +168,12 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
     }
 
     @Override
-    public CleanupValidationResponse uploadCleanupImage(Long assignmentId, MultipartFile image) {
+    public CleanupValidationResponse uploadCleanupImage(
+            Long assignmentId,
+            MultipartFile image,
+            Double latitude,  // Cleaner's captured latitude
+            Double longitude  // Cleaner's captured longitude
+    ) {
 
         // Logged-in user
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -197,6 +211,15 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         if (assignment.getStatus() != AssignmentStatus.IN_PROGRESS) {
             throw new CleanupNotStartedException("Cleanup must be started before uploading the completion image.");
         }
+
+        /*
+         * Proof of presence.
+         *
+         * The cleaner's captured position is checked against the citizen's
+         * reported coordinates first, so a photograph taken away from the
+         * site never reaches Cloudinary or the AI.
+         */
+        validateCleanerProximity(assignment.getReport(), latitude, longitude);
 
         /*
          * Cleaner may upload multiple images until
@@ -512,6 +535,54 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
 
     /**
+     * Ensures the cleaner is standing at the reported site when uploading proof.
+     *
+     * The position comes from the cleaner's device; the UI offers no manual
+     * entry, and a request arriving without a usable position is refused here
+     * so the check cannot simply be skipped.
+     */
+    private void validateCleanerProximity(GarbageReport report, Double latitude, Double longitude) {
+
+        // Without a readable position, presence cannot be established
+        if (latitude == null || longitude == null
+                || !Double.isFinite(latitude) || !Double.isFinite(longitude)) {
+
+            throw new CleanerTooFarFromSiteException(
+                    "Your current location could not be read. Please allow location access and capture your position at the site before uploading the cleanup image.",
+                    -1,                             // Distance unknown
+                    CLEANUP_PROOF_RADIUS_METERS
+            );
+        }
+
+        // Reports filed before coordinate capture cannot be measured against
+        if (report.getLatitude() == null || report.getLongitude() == null) {
+            return;
+        }
+
+        // Straight-line distance from the cleaner to the reported location
+        double distanceMeters = GeoLocationUtil.calculateDistanceMeters(
+                latitude,
+                longitude,
+                report.getLatitude(),
+                report.getLongitude()
+        );
+
+        if (distanceMeters > CLEANUP_PROOF_RADIUS_METERS) {
+
+            // Numbers are named in the message so the cleaner knows how far to move
+            throw new CleanerTooFarFromSiteException(
+                    "You appear to be " + Math.round(distanceMeters)
+                            + " m away from the reported location. Cleanup proof is accepted only within "
+                            + Math.round(CLEANUP_PROOF_RADIUS_METERS)
+                            + " m of the site.",
+                    distanceMeters,
+                    CLEANUP_PROOF_RADIUS_METERS
+            );
+        }
+    }
+
+
+    /**
      * Converts CleanupAssignment entity into Dashboard DTO.
      */
     private CleanupAssignmentResponse mapToResponse(CleanupAssignment assignment) {
@@ -533,6 +604,10 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 // Report location
                 .address(assignment.getReport().getAddress())
                 .city(assignment.getReport().getCity())
+
+                // Coordinates the cleaner app measures its distance against
+                .reportLatitude(assignment.getReport().getLatitude())
+                .reportLongitude(assignment.getReport().getLongitude())
 
                 // Assignment & report status
                 .assignmentStatus(assignment.getStatus().name())

@@ -177,6 +177,18 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handles cleanup proof uploaded from outside the reported site.
+     *
+     * The message already names the measured distance and the permitted
+     * radius, so it is passed through unchanged for the cleaner to read.
+     */
+    @ExceptionHandler(CleanerTooFarFromSiteException.class)
+    public ResponseEntity<ErrorResponse> handleCleanerTooFarFromSiteException(CleanerTooFarFromSiteException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
      * Handles AI service failures.
      */
     @ExceptionHandler(AIServiceUnavailableException.class)

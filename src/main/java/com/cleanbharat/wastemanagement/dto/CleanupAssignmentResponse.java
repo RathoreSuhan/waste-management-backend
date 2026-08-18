@@ -35,6 +35,17 @@ public class CleanupAssignmentResponse {
     // City where cleanup is required
     private String city;
 
+    /**
+     * Coordinates of the original citizen report.
+     *
+     * Sent so the cleaner app can measure the distance to the site before
+     * an upload is attempted. The same distance is re-checked on the server,
+     * so these values are a convenience for the user, not the safeguard.
+     */
+    private Double reportLatitude;
+
+    private Double reportLongitude;
+
     // Current assignment status
     private String assignmentStatus;
 

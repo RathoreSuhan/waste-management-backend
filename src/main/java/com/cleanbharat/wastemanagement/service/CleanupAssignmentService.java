@@ -19,9 +19,13 @@ public interface CleanupAssignmentService {
     void startCleanup(Long assignmentId);
 
     // Upload after-cleanup image and validate using AI
+    // The cleaner's captured position is required so proof from
+    // outside the reported site can be rejected before any upload
     CleanupValidationResponse uploadCleanupImage(
             Long assignmentId,
-            MultipartFile image
+            MultipartFile image,
+            Double latitude,
+            Double longitude
     );
 
     // Returns every assignment claimed by the logged-in cleaner

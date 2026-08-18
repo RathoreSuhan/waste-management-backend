@@ -59,14 +59,26 @@ public class CleanupAssignmentController {
     @PostMapping(value = "/{assignmentId}/upload-image", consumes = "multipart/form-data")
     public ResponseEntity<CleanupValidationResponse> uploadCleanupImage(
             @PathVariable Long assignmentId,
-            @RequestParam("image") MultipartFile image
+            @RequestParam("image") MultipartFile image,
+
+            /*
+             * Position captured by the cleaner's device.
+             *
+             * Optional at binding level only so a request without it produces
+             * the guidance message from the service instead of a generic
+             * "required parameter is missing" error.
+             */
+            @RequestParam(value = "latitude", required = false) Double latitude,
+            @RequestParam(value = "longitude", required = false) Double longitude
     ) {
 
         // Upload image and validate using AI
         CleanupValidationResponse response =
                 cleanupAssignmentService.uploadCleanupImage(
                         assignmentId,
-                        image
+                        image,
+                        latitude,   // Verified against the report location
+                        longitude
                 );
 
         return ResponseEntity.ok(response);
