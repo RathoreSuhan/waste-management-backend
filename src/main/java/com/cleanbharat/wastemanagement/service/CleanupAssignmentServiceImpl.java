@@ -105,6 +105,21 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         assignment.setStatus(AssignmentStatus.CLAIMED);
         assignment.setClaimedAt(LocalDateTime.now());
 
+        /*
+         * The report is no longer waiting for a cleanup team, so it leaves the
+         * pending queue the moment a cleaner takes ownership of the work.
+         *
+         * Written here rather than in startCleanup() because claiming is the
+         * first irreversible step, and because ReportStatus has no separate
+         * CLAIMED value - both CLAIMED and IN_PROGRESS assignments read as one
+         * "work underway" state to citizens.
+         *
+         * The report is a managed entity inside this transaction, so the
+         * change flushes without an explicit report repository save (same
+         * pattern as resolveCleanupAssignment()).
+         */
+        assignment.getReport().setStatus(ReportStatus.IN_PROGRESS);
+
         assignmentRepository.save(assignment);
     }
 
