@@ -89,4 +89,37 @@ public interface CleanupAssignmentRepository extends JpaRepository<CleanupAssign
      * Checks whether a cleaner has any cleanup assignments.
      */
     boolean existsByCleaner(User cleaner);
+
+    // Unawarded sites in any of the given statuses, newest first (proposal-era "available" list)
+    List<CleanupAssignment> findByCleanerIsNullAndStatusInOrderByIdDesc(List<AssignmentStatus> statuses);
+
+    // Municipal review queue: only this corporation's assignments in one status
+    List<CleanupAssignment> findByAssignedMunicipalCorporationAndStatusOrderByIdDesc(
+            MunicipalCorporation municipalCorporation,
+            AssignmentStatus status
+    );
+
+    // Same jurisdiction scoping, but for several statuses at once
+    List<CleanupAssignment> findByAssignedMunicipalCorporationAndStatusInOrderByIdDesc(
+            MunicipalCorporation municipalCorporation,
+            List<AssignmentStatus> statuses
+    );
+
+    // A cleaner's live work now spans IN_PROGRESS and REWORK_REQUIRED
+    List<CleanupAssignment> findByCleanerAndStatusIn(User cleaner, List<AssignmentStatus> statuses);
+
+    // Municipal overview tile: this corporation's assignments in one status
+    long countByAssignedMunicipalCorporationAndStatus(
+            MunicipalCorporation municipalCorporation,
+            AssignmentStatus status
+    );
+
+    // Municipal overview tile: grouped statuses (e.g. all active cleanups)
+    long countByAssignedMunicipalCorporationAndStatusIn(
+            MunicipalCorporation municipalCorporation,
+            List<AssignmentStatus> statuses
+    );
+
+    // Municipal overview tile: every site that falls under this corporation
+    long countByAssignedMunicipalCorporation(MunicipalCorporation municipalCorporation);
 }

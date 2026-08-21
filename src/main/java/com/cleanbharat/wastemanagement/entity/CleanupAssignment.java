@@ -4,6 +4,7 @@ import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDateTime;
+import java.util.List; // competing cleaner proposals
 
 @Entity
 @Table(name = "cleanup_assignments")
@@ -48,6 +49,20 @@ public class CleanupAssignment {
     // When cleaner started cleaning
     private LocalDateTime startedAt;
 
+    /*
+     * Start-of-work location evidence (Phase 16).
+     *
+     * Captured on the cleaner's device when START CLEANUP is pressed, so the
+     * municipality can later see the cleaner was physically at the site before
+     * work began. Nullable because legacy rows were started without it.
+     */
+    private Double startLatitude;
+
+    private Double startLongitude;
+
+    // Distance in metres between the start position and the reported location
+    private Double startDistanceMeters;
+
     // When cleaner completed cleaning
     private LocalDateTime completedAt;
 
@@ -65,4 +80,22 @@ public class CleanupAssignment {
             status = AssignmentStatus.PENDING;
         }
     }
+
+    /*
+     * Proposals submitted by cleaners for this site.
+     *
+     * Cascade and orphanRemoval tie proposal rows to the assignment lifecycle,
+     * so removing an assignment also clears its proposals.
+     */
+    @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<CleanupProposal> proposals;
+
+    /*
+     * Optional work diary written by the cleaner while the site is IN_PROGRESS.
+     *
+     * Empty for a quick one-day cleanup; several entries for a multi-day drive.
+     * Tied to the assignment lifecycle exactly like proposals.
+     */
+    @OneToMany(mappedBy = "assignment", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<CleanupActivityLog> activityLogs;
 }

@@ -1,5 +1,7 @@
 package com.cleanbharat.wastemanagement.exception;
 
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import com.cleanbharat.wastemanagement.dto.ai.DuplicateReportResponse;
@@ -16,6 +18,7 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
 import org.springframework.http.converter.HttpMessageNotReadableException;
 
 @RestControllerAdvice // global handler
+@Slf4j // Unexpected failures are recorded server side instead of being sent to the browser
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(InvalidRegistrationException.class)
@@ -320,9 +323,73 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 
+    /**
+     * Handles any database rule the write violated: a CHECK constraint, a
+     * unique index, a foreign key, or a NOT NULL column.
+     *
+     * Spring wraps these as DataIntegrityViolationException, whose message is
+     * the raw JDBC text - the failing SQL statement, the table and column
+     * names, and the rejected row. Without this handler it fell through to the
+     * catch-all below and that whole dump was rendered in the user's error
+     * banner, which is both unreadable and an information leak.
+     *
+     * The full detail is logged for the developer; the caller only gets a short
+     * message telling them the save did not go through.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+
+        // Root cause carries the actual constraint name, useful while debugging
+        log.error("Database rejected the write: {}", ex.getMostSpecificCause().getMessage(), ex);
+
+        ErrorResponse error = new ErrorResponse(
+                "This could not be saved because it conflicts with existing records. "
+                        + "Please try again, and contact support if it keeps happening.",
+                HttpStatus.CONFLICT.value()
+        );
+
+        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    /**
+     * Last resort for anything not handled above.
+     *
+     * The exception message is deliberately NOT returned: for unexpected
+     * failures it is internal detail (stack traces, SQL, third-party API
+     * payloads) that the user cannot act on. It is logged instead, so nothing
+     * is lost for debugging.
+     */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleException(Exception ex){
-        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR.value());
+
+        log.error("Unhandled exception", ex); // Full detail stays in the server log
+
+        ErrorResponse error = new ErrorResponse(
+                "Something went wrong on our side. Please try again in a moment.",
+                HttpStatus.INTERNAL_SERVER_ERROR.value()
+        );
+
         return new ResponseEntity<>(error, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    // A cleaner already has a live proposal on this site (409 keeps the UI message actionable)
+    @ExceptionHandler(DuplicateProposalException.class)
+    public ResponseEntity<ErrorResponse> handleDuplicateProposal(DuplicateProposalException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.CONFLICT.value());
+        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    // Proposal id does not exist, or does not belong to the caller
+    @ExceptionHandler(ProposalNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleProposalNotFound(ProposalNotFoundException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.NOT_FOUND.value());
+        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
+    }
+
+    // Proposal or site is in a state that forbids the requested action
+    @ExceptionHandler(InvalidProposalStateException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidProposalState(InvalidProposalStateException ex) {
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
     }
 }

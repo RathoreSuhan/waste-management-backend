@@ -1,7 +1,9 @@
 package com.cleanbharat.wastemanagement.service.deletion;
 
+import com.cleanbharat.wastemanagement.entity.CleanupActivityLog;
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
 import com.cleanbharat.wastemanagement.entity.User;
+import com.cleanbharat.wastemanagement.repository.CleanupActivityLogRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.PublicFeedAnalyticsRepository;
 import com.cleanbharat.wastemanagement.repository.RewardHistoryRepository;
@@ -23,6 +25,9 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
     // Assignment repository
     private final CleanupAssignmentRepository cleanupAssignmentRepository;
+
+    // Optional cleanup work diary written while the site was IN_PROGRESS
+    private final CleanupActivityLogRepository cleanupActivityLogRepository;
 
     // Reward history repository
     private final RewardHistoryRepository rewardHistoryRepository;
@@ -53,6 +58,17 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
         /*
          * Step 2
+         * Delete the optional activity log.
+         *
+         * The rows would cascade away with the assignment, but the photos
+         * attached to them would stay behind on Cloudinary, so each entry is
+         * cleared explicitly first.
+         */
+        deleteActivityLogs(assignment);
+
+
+        /*
+         * Step 3
          * Delete analytics if present.
          */
         analyticsRepository.findByCleanupAssignment(assignment)
@@ -60,7 +76,7 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
 
         /*
-         * Step 3
+         * Step 4
          * Withdraw the likes people gave this cleanup.
          *
          * The report outlives the cleanup here, and a like belongs to the
@@ -77,7 +93,7 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
 
         /*
-         * Step 4
+         * Step 5
          * Reverse cleaner reward points and delete reward history.
          */
 
@@ -101,11 +117,32 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
 
 
         /*
-         * Step 5
+         * Step 6
          * Delete assignment.
          */
 
         cleanupAssignmentRepository.delete(assignment);
+    }
+
+    /**
+     * Removes every activity entry of this assignment together with its image.
+     *
+     * Silent no-op for the common case: most cleanups carry no diary at all.
+     */
+    private void deleteActivityLogs(CleanupAssignment assignment) {
+
+        for (CleanupActivityLog activityLog :
+                cleanupActivityLogRepository.findByAssignmentOrderByActivityAtAsc(assignment)) {
+
+            String imageUrl = activityLog.getImageUrl();
+
+            // Entries without a photo simply have nothing to release
+            if (imageUrl != null && !imageUrl.isBlank()) {
+                cloudinaryService.deleteFile(imageUrl);
+            }
+        }
+
+        cleanupActivityLogRepository.deleteByAssignment(assignment);
     }
 
     /**

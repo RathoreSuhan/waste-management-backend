@@ -12,11 +12,16 @@ public interface CleanupAssignmentService {
     // Creates default assignment after report creation
     void createDefaultAssignment(GarbageReport report);
 
-    // Cleaner claims a pending assignment
-    void claimAssignment(Long assignmentId);
+    // claimAssignment() removed: cleaners now submit proposals for municipal approval
 
-    // Cleaner starts an already claimed assignment
-    void startCleanup(Long assignmentId);
+    /*
+     * Authorized cleaner starts the approved cleanup.
+     *
+     * The captured position is start-of-work location evidence: it proves the
+     * cleaner was at the site before work began and is verified against the
+     * same 50 m radius used for the proof upload.
+     */
+    void startCleanup(Long assignmentId, Double latitude, Double longitude);
 
     // Upload after-cleanup image and validate using AI
     // The cleaner's captured position is required so proof from

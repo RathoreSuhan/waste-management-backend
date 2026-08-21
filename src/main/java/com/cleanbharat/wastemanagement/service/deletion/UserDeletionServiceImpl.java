@@ -36,6 +36,9 @@ public class UserDeletionServiceImpl implements UserDeletionService {
     //Cleanup Assignment Repository
     private final CleanupAssignmentRepository cleanupAssignmentRepository;
 
+    // Cleanup work-diary repository (optional activity entries written by cleaners)
+    private final CleanupActivityLogRepository cleanupActivityLogRepository;
+
 
     @Override
     public void deleteCitizen(User citizen) {
@@ -119,6 +122,19 @@ public class UserDeletionServiceImpl implements UserDeletionService {
         if (cleanupAssignmentRepository.existsByCleaner(cleaner)) {
             throw new UserDeletionNotAllowedException("Cleaner cannot be deleted because cleanup assignments are associated with this account.");
         }
+
+        /*
+         * Safety net for the optional cleanup work diary.
+         *
+         * Activity entries always hang off an assignment, and
+         * AssignmentDeletionService already removes them (together with
+         * their Cloudinary images) whenever an assignment goes away.
+         * Reaching this line means the cleaner holds no assignment, so
+         * this call normally deletes nothing - it only guards against
+         * stray rows keeping the foreign key alive.
+         */
+        cleanupActivityLogRepository.deleteByCleaner(cleaner);
+
         userRepository.delete(cleaner);
     }
 }

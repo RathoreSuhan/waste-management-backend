@@ -55,6 +55,21 @@ public class CleanupAssignmentResponse {
     // Name of assigned cleaner
     private String cleanerName;
 
+    /**
+     * Cleaner identity shown to the reviewing municipal officer.
+     *
+     * Needed on the municipal dashboard so the officer knows exactly who was
+     * authorised, whether they are an individual or an organisation, and how to
+     * reach them. Null while a site is still open for proposals.
+     */
+    private Long cleanerId;
+
+    private String cleanerEmail;
+
+    private String cleanerType; // INDIVIDUAL / NGO / CONTRACTOR ... as recorded on the account
+
+    private String cleanerOrganization; // blank for individual cleaners
+
     // Municipal Corporation responsible
     private String municipalCorporation;
 
@@ -73,8 +88,39 @@ public class CleanupAssignmentResponse {
     // Cleanup start time
     private LocalDateTime startedAt;
 
+    /**
+     * Start-of-work location evidence (Phase 16).
+     *
+     * Captured when the authorised cleaner pressed START CLEANUP and verified
+     * against the report coordinates on the server, so it proves the work
+     * actually began at the site.
+     */
+    private Double startLatitude;
+
+    private Double startLongitude;
+
+    /**
+     * Server-measured distance between the start position and the report.
+     *
+     * This is the recorded GPS verification result the municipal officer reads
+     * against the 50 m proximity rule; null for legacy rows started before
+     * location evidence was captured.
+     */
+    private Double startDistanceMeters;
+
     // Cleanup completion time
     private LocalDateTime completedAt;
+
+    /**
+     * Number of optional activity entries recorded for this cleanup.
+     *
+     * Zero is perfectly valid: the work diary is optional and a short one-day
+     * cleanup normally has no entries at all.
+     */
+    private Integer activityLogCount;
+
+    // How many cleaners bid for this site (municipal proposal queue)
+    private Long proposalCount;
 
     // Garbage report creation time
     private LocalDateTime reportCreatedAt;

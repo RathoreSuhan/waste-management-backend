@@ -174,6 +174,18 @@ public class SecurityConfig {
                         .hasRole("CITIZEN")
 
                         // All other endpoints require authentication
+                        // Cleanup proposals: cleaners inspect sites and bid for work
+                        .requestMatchers("/api/cleanup-proposals/**")
+                        .hasRole("CLEANER")
+
+                        // Cleanup work diary: only cleaners write it, ownership re-checked in the service
+                        .requestMatchers("/api/cleanup-activity-logs/**")
+                        .hasRole("CLEANER")
+
+                        // Municipal approvals: officers authorise cleaners and sign off completed work
+                        .requestMatchers("/api/cleanup-approvals/**")
+                        .hasRole("MUNICIPAL_OFFICER")
+
                         .anyRequest().authenticated()
                 )
 

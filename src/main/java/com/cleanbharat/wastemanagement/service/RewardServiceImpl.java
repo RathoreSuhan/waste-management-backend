@@ -34,6 +34,20 @@ public class RewardServiceImpl implements RewardService {
     @Override
     public void rewardCleaner(CleanupAssignment assignment) {
 
+        /*
+         * Paid exactly once per cleanup.
+         *
+         * The municipality is the only source of a reward, and its sign-off
+         * can legitimately be reached more than once: an officer may re-open
+         * a completion, and a cleanup sent back for rework returns for a
+         * second approval. Without this check the same cleanup would credit
+         * the cleaner again on each pass, and the leaderboard - which reads
+         * the cached total - would inherit the inflation.
+         */
+        if (rewardHistoryRepository.existsByAssignment(assignment)) {
+            return; // Already rewarded, nothing further to credit
+        }
+
         // Cleaner who completed the assignment
         User cleaner = assignment.getCleaner();
 

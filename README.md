@@ -97,13 +97,13 @@ After a cleaner uploads the cleanup image, Google Gemini Vision compares the **B
 - Camera angle similarity
 - Confidence threshold
 
-Only AI-verified cleanups are marked as completed.
+AI verification alone does **not** close a cleanup. An AI-verified cleanup only moves to `AWAITING_APPROVAL`, where the city Municipal Corporation gives the final sign-off.
 
 ---
 
 ### 🏆 Reward & Leaderboard System
 
-Cleaners earn reward points only after successful AI verification.
+Cleaners earn reward points only after the city Municipal Corporation approves the completed cleanup. GPS proof and AI verification are prerequisites, and every cleanup is rewarded **exactly once**.
 
 The platform automatically generates:
 
@@ -130,7 +130,7 @@ This enables intelligent report prioritization and trending report discovery.
 
 ### 🌐 Public Transparency
 
-Every successfully completed and AI-verified cleanup is automatically published to a public feed where anyone can view:
+Every cleanup officially signed off by its Municipal Corporation is published to a public feed where anyone can view:
 
 - Before & After images
 - Cleaner details
@@ -164,22 +164,34 @@ Cloudinary Image Storage
 Garbage Report Created
     │
     ▼
-Automatic Municipal Assignment
+Assigned to the City Municipal Corporation
     │
     ▼
-Cleaner Claims Assignment
+Cleaner Inspects Site & Submits Cleanup Proposal
     │
     ▼
-Cleaner Starts Cleanup
+Municipal Proposal Decision (Approve / Reject / Request Revision)
     │
     ▼
-Cleaner Uploads Cleanup Image
+Cleaner Starts Cleanup (GPS proof within 50 m)
+    │
+    ▼
+Optional Activity Log Updates
+    │
+    ▼
+Cleaner Uploads Cleanup Proof (GPS + After Image)
     │
     ▼
 Google Gemini Cleanup Verification
     │
     ▼
-Reward Generated
+Awaiting Municipal Completion Review
+    │
+    ▼
+Municipal Completion Sign-off
+    │
+    ▼
+Reward Generated (Once)
     │
     ▼
 Report Marked Resolved
@@ -443,8 +455,13 @@ Authentication is implemented using **Spring Security** and **JWT (JSON Web Toke
 | Role | Description |
 |------|-------------|
 | 👤 Citizen | Reports garbage, votes, comments, tracks reports |
-| 🧹 Cleaner | Claims assignments and uploads cleanup proof |
+| 🧹 Cleaner | Proposes cleanups, executes approved work, uploads cleanup proof |
+| 🏛 Municipal Corporation | Approves proposals and signs off completed cleanups **for its own city only** |
 | 👨‍💼 Admin | Complete platform management |
+
+A Municipal Corporation is **not** a self-registered account. It is a row in the `municipal_corporations` table created by an Admin, and only the email stored on that row can sign in to the Municipal Console.
+
+> The `MUNICIPAL` cleaner type only describes the kind of cleanup crew. It never grants Municipal Console access.
 
 Authentication Flow
 
@@ -613,6 +630,35 @@ Benefits
 - Dynamic expansion
 - No code changes for new cities
 
+## Municipal Corporation Login
+
+One city maps to exactly one Municipal Corporation, and that corporation is the only account able to operate the Municipal Console for that city.
+
+| Rule | Behaviour |
+|------|-----------|
+| Account creation | Only an Admin can register a corporation (city, organization, phone, email) |
+| Login identity | The corporation's registered email — nothing else resolves to municipal authority |
+| Default password | Issued automatically when the corporation row is created (documented for the operator, never printed by the API) |
+| Password change | `PUT /api/account/password` works for corporations exactly as it does for users |
+| Self-registration | Blocked — `/api/auth/register` rejects `ROLE_MUNICIPAL_OFFICER` and rejects any email already used by a corporation |
+| Data scope | Every municipal endpoint resolves the corporation from the JWT, so one city can never read or decide another city's cleanups |
+
+```text
+Admin adds Municipal Corporation (city + email)
+              │
+              ▼
+Default password stored as a BCrypt hash
+              │
+              ▼
+Corporation signs in with that email
+              │
+              ▼
+JWT issued with ROLE_MUNICIPAL_OFFICER
+              │
+              ▼
+Municipal Console scoped to that city only
+```
+
 ---
 
 # ⭐ Community Voting Module
@@ -701,53 +747,198 @@ Admin
 
 # 🗄 Database Design
 
-The backend uses **PostgreSQL** as the primary relational database.
+The backend uses **PostgreSQL** in production and an in-memory **H2** database for automated tests.
+Hibernate generates the schema from the JPA entities (`spring.jpa.hibernate.ddl-auto=update`), so every
+table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagement.entity`.
 
-Major Entities
+## Tables at a Glance
 
-- User
-- GarbageReport
-- MunicipalCorporation
-- Vote
-- Comment
-- CleanupAssignment
-- RewardHistory
-- PublicFeedAnalytics
+| # | Table | Entity | Purpose |
+|---|-------|--------|---------|
+| 1 | `users` | `User` | Every account — citizen, cleaner, municipal officer, admin |
+| 2 | `garbage_reports` | `GarbageReport` | Citizen-submitted garbage complaints |
+| 3 | `municipal_corporations` | `MunicipalCorporation` | City-wise civic body (also the officer login owner) |
+| 4 | `cleanup_assignments` | `CleanupAssignment` | Work order raised for a report, owned by one city corporation |
+| 5 | `cleanup_proposals` | `CleanupProposal` | Cleaner's site inspection + cleanup plan for an assignment |
+| 6 | `cleanup_approvals` | `CleanupApproval` | Municipal decision trail — proposal stage **and** completion stage |
+| 7 | `cleanup_activity_logs` | `CleanupActivityLog` | Optional progress notes posted while cleaning is in progress |
+| 8 | `votes` | `Vote` | One urgency up-vote per user per report |
+| 9 | `comments` | `Comment` | Threaded discussion on a report |
+| 10 | `reward_history` | `RewardHistory` | Points ledger for cleaners |
+| 11 | `public_feed_analytics` | `PublicFeedAnalytics` | Likes / views of a completed cleanup story |
 
-Entity Relationship Overview
+## ER Diagram — Accounts & Community
 
 ```text
-                     User
-                      │
-          ┌───────────┼────────────┐
-          │           │            │
-          ▼           ▼            ▼
- GarbageReport      Vote       Comment
-          │           │            │
-          │           └────────────┘
-          │
-          ▼
- CleanupAssignment
-          │
-     ┌────┴─────────┐
-     ▼              ▼
-RewardHistory   PublicFeedAnalytics
+                 ┌──────────────────────────────┐
+                 │            users             │
+                 │──────────────────────────────│
+                 │ id (PK)                      │
+                 │ name                         │
+                 │ email (unique)               │
+                 │ password (BCrypt)            │
+                 │ role            <enum>       │
+                 │ cleaner_type    <enum, null> │
+                 │ points                       │
+                 │ created_at                   │
+                 └──────────────┬───────────────┘
+                                │ 1:N  creates
+                                ▼
+                 ┌──────────────────────────────┐
+                 │       garbage_reports        │
+                 │──────────────────────────────│
+                 │ id (PK)                      │
+                 │ user_id (FK → users)         │
+                 │ title / description          │
+                 │ image_url                    │
+                 │ latitude / longitude         │
+                 │ address / city               │
+                 │ status          <enum>       │
+                 │ urgency_score                │
+                 │ created_at                   │
+                 └───┬──────────────────────┬───┘
+              1:N    │                      │    1:N
+        ┌────────────┘                      └────────────┐
+        ▼                                                ▼
+┌──────────────────────────────┐   ┌──────────────────────────────┐
+│            votes             │   │           comments           │
+│──────────────────────────────│   │──────────────────────────────│
+│ id (PK)                      │   │ id (PK)                      │
+│ user_id (FK)                 │   │ user_id (FK)                 │
+│ report_id (FK)               │   │ report_id (FK)               │
+│ created_at                   │   │ parent_comment_id (FK, self, │
+│ UNIQUE (user_id, report_id)  │   │   nullable)                  │
+└──────────────────────────────┘   │ content / created_at         │
+                                   └──────────────────────────────┘
 ```
 
-Relationship Summary
+## ER Diagram — Cleanup Workflow
 
-| Relationship | Type |
-|-------------|------|
-| User → Reports | One-to-Many |
-| User → Votes | One-to-Many |
-| User → Comments | One-to-Many |
-| Report → Votes | One-to-Many |
-| Report → Comments | One-to-Many |
-| Report → Cleanup Assignment | One-to-One |
-| Cleanup Assignment → Reward History | One-to-One |
-| Cleanup Assignment → Public Feed Analytics | One-to-One |
+```text
+   ┌──────────────────────────────┐      ┌──────────────────────────────┐
+   │       garbage_reports        │      │    municipal_corporations    │
+   │──────────────────────────────│      │──────────────────────────────│
+   │ the citizen complaint        │      │ id (PK)                      │
+   │ (see diagram above)          │      │ city / organization_name     │
+   │                              │      │ phone / email                │
+   └──────────────┬───────────────┘      └──────────────┬───────────────┘
+                  │ 1:1 active work order               │ 1:N jobs of that city
+                  └───────────────┬─────────────────────┘
+                                  ▼
+              ┌──────────────────────────────────────────────┐
+              │             cleanup_assignments              │
+              │──────────────────────────────────────────────│
+              │ id (PK)                                      │
+              │ report_id (FK)                               │
+              │ municipal_corporation_id (FK)                │
+              │ cleaner_id (FK → users, NULLABLE)            │
+              │ status <enum>                                │
+              │ cleanup_image_url                            │
+              │ claimed_at / started_at / completed_at       │
+              │ start_lat / start_lng / start_distance_m     │
+              │ ai_verified / ai_confidence / ai_remarks     │
+              └──┬───────────────────────────────────────────┘
+                 │
+                 ├── 1:N ──▶ cleanup_proposals      (cleaner bids — 1 per cleaner)
+                 ├── 1:N ──▶ cleanup_approvals      (decisions of both stages)
+                 ├── 1:N ──▶ cleanup_activity_logs  (optional progress notes)
+                 ├── 1:N ──▶ reward_history         (points credited on completion)
+                 └── 1:1 ──▶ public_feed_analytics  (likes & views of the story)
+```
 
-The schema is fully normalized and designed to minimize redundancy while supporting efficient querying.
+## Foreign Key Map
+
+| Child table | Column | Parent | Nullable | Notes |
+|-------------|--------|--------|----------|-------|
+| `garbage_reports` | `user_id` | `users` | No | Reporting citizen |
+| `cleanup_assignments` | `report_id` | `garbage_reports` | No | One active work order per report |
+| `cleanup_assignments` | `municipal_corporation_id` | `municipal_corporations` | No | City body that owns the job |
+| `cleanup_assignments` | `cleaner_id` | `users` | **Yes** | Empty until a proposal is approved |
+| `cleanup_proposals` | `assignment_id` | `cleanup_assignments` | No | Cascade ALL + orphan removal from parent |
+| `cleanup_proposals` | `cleaner_id` | `users` | No | Unique with `assignment_id` |
+| `cleanup_approvals` | `assignment_id` | `cleanup_assignments` | No | Assignment being reviewed |
+| `cleanup_approvals` | `proposal_id` | `cleanup_proposals` | **Yes** | Set for `PROPOSAL` stage, `NULL` for `COMPLETION` |
+| `cleanup_approvals` | `municipal_corporation_id` | `municipal_corporations` | No | Reviewing city body |
+| `cleanup_approvals` | `decided_by` | `users` | No | Officer accountability |
+| `cleanup_activity_logs` | `assignment_id` | `cleanup_assignments` | No | Cascade ALL + orphan removal from parent |
+| `cleanup_activity_logs` | `cleaner_id` | `users` | No | Author of the progress note |
+| `votes` | `user_id`, `report_id` | `users`, `garbage_reports` | No | Unique pair — one vote per user per report |
+| `comments` | `user_id`, `report_id` | `users`, `garbage_reports` | No | Discussion author + target report |
+| `comments` | `parent_comment_id` | `comments` | **Yes** | Self reference → threaded replies |
+| `reward_history` | `cleaner_id` | `users` | No | Cleaner who earned the points |
+| `reward_history` | `assignment_id` | `cleanup_assignments` | No | Cleanup the points were credited for |
+| `public_feed_analytics` | `cleanup_assignment_id` | `cleanup_assignments` | No | `@OneToOne` + unique — one row per completed cleanup |
+
+## Table Notes
+
+- **`users`** — one table for all four roles; `cleaner_type` is filled only for cleaners.
+  `ROLE_MUNICIPAL_OFFICER` accounts are city-scoped, so an officer only ever sees the reports and
+  assignments of their own corporation.
+- **`municipal_corporations`** — admin-managed master data (city, organisation name, phone, email).
+  It is both the public helpline directory and the owner of every assignment raised in that city.
+- **`cleanup_assignments`** — created automatically when a report is accepted, so `cleaner_id` stays
+  `NULL` while the job is still open for bids. The GPS columns store where the cleaner actually stood
+  when starting work (`start_distance_m` is the distance from the reported spot).
+- **`cleanup_proposals`** — carries proof of inspection (`inspection_image_url`, `inspection_latitude`,
+  `inspection_longitude`, `inspection_distance_meters`, `inspected_at`, `site_observations`) and the
+  plan itself (`estimated_duration_days`, `manpower_count`, `equipment`, `cleaning_method`,
+  `waste_handling_plan`, `estimated_waste_volume`, `proposed_start_date`, `remarks`).
+  A unique constraint `uk_proposal_assignment_cleaner (assignment_id, cleaner_id)` allows **many
+  cleaners per assignment but only one live proposal per cleaner** — a revision updates the same row.
+- **`cleanup_approvals`** — a single reusable audit table for **both** review gates; `stage` says which
+  gate it belongs to, `decision` says the outcome, `decided_by` says which officer signed it, and
+  `decided_at` is stamped once (decisions are never edited, only new rows are added).
+- **`cleanup_activity_logs`** — optional notes (`description`, `activity_at`, optional `image_url` and
+  GPS) that a cleaner may post only while the assignment is `IN_PROGRESS`.
+- **`reward_history`** — append-only ledger; the cached `users.points` total is derived from it.
+- **`public_feed_analytics`** — engagement counters for the public success-story feed, one row per
+  completed assignment.
+
+## Persisted Enum Columns
+
+All enums are stored as text via `@Enumerated(EnumType.STRING)`. Exactly seven columns are enum-backed:
+
+| Column | Enum | Values |
+|--------|------|--------|
+| `users.role` | `Role` | `ROLE_ADMIN`, `ROLE_CITIZEN`, `ROLE_CLEANER`, `ROLE_MUNICIPAL_OFFICER` |
+| `users.cleaner_type` | `CleanerType` | `MUNICIPAL`, `INDIVIDUAL`, `NGO`, `PRIVATE` (nullable) |
+| `garbage_reports.status` | `ReportStatus` | `PENDING`, `IN_PROGRESS`, `RESOLVED` |
+| `cleanup_assignments.status` | `AssignmentStatus` | `PENDING`, `PROPOSAL_SUBMITTED`, `ASSIGNED`, `IN_PROGRESS`, `AWAITING_APPROVAL`, `REWORK_REQUIRED`, `CLAIMED` *(legacy)*, `COMPLETED` |
+| `cleanup_proposals.status` | `ProposalStatus` | `SUBMITTED`, `APPROVED`, `REJECTED`, `REVISION_REQUIRED`, `WITHDRAWN` |
+| `cleanup_approvals.stage` | `ApprovalStage` | `PROPOSAL`, `COMPLETION` |
+| `cleanup_approvals.decision` | `ApprovalDecision` | `APPROVED`, `REJECTED`, `REVISION_REQUIRED` |
+
+`CLAIMED` is kept only so historical rows from the older direct-claim flow still load; new assignments
+never enter that state.
+
+Enums that are **never** stored in the database (runtime / API only):
+
+| Enum | Where it lives |
+|------|----------------|
+| `BadgeType` (`BRONZE`, `SILVER`, `GOLD`) | Computed on the fly in `LeaderboardServiceImpl.calculateBadge()` from `users.points` |
+| `ImageRejectionReason` | AI validation responses and `InvalidReportImageException` only |
+| `LeaderboardType` | Request parameter for leaderboard scope |
+
+## Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Enum as STRING** | Human-readable rows and no ordinal corruption when a new enum value is added |
+| **Nullable `cleaner_id`** | An assignment exists before anyone is selected, so the winner is stamped only at approval time |
+| **One approvals table, two stages** | Proposal review and completion review share the same audit shape, so `stage` avoids a duplicate table |
+| **Unique `(assignment_id, cleaner_id)`** | Competitive bidding without duplicate proposals from the same cleaner |
+| **Unique `(user_id, report_id)` on votes** | Prevents double voting on urgency |
+| **Self-referencing `comments`** | Threaded replies without a separate replies table |
+| **Append-only ledger + cached points** | `reward_history` keeps the audit trail while `users.points` keeps leaderboard queries fast |
+| **City scoping** | `municipal_corporation_id` on assignments/approvals keeps every officer inside their own city's data |
+
+## Schema Maintenance
+
+Because `ddl-auto=update` never rewrites an existing CHECK constraint, PostgreSQL can keep an old
+`*_status_check` constraint after new enum values are introduced (for example the newer
+`AssignmentStatus` values). The one-time repair script
+`src/main/resources/db/fix-enum-check-constraints.sql` drops and recreates those stale constraints so
+the database accepts the current enum sets.
 
 ---
 
@@ -938,9 +1129,9 @@ Beyond core modules like authentication, reporting, AI validation, and community
 
 # 🧹 Smart Cleanup Assignment Workflow
 
-Once a garbage report successfully passes AI validation and duplicate detection, the platform automatically initiates the cleanup process.
+Once a garbage report successfully passes AI validation and duplicate detection, the platform automatically creates a cleanup assignment and hands it to the Municipal Corporation of that city.
 
-Unlike traditional complaint systems where reports remain static until manually assigned, Clean Bharat creates a structured workflow that tracks the complete lifecycle of every cleanup operation.
+Cleaners never take work on their own authority. A cleaner may only *propose* a cleanup; the city Municipal Corporation decides who executes it and whether the finished work is acceptable.
 
 ## Complete Cleanup Lifecycle
 
@@ -957,22 +1148,48 @@ Duplicate Detection
 Report Created
           │
           ▼
-Cleanup Assignment Generated
+Assignment Created for the City Municipal Corporation
           │
           ▼
-Cleaner Claims Assignment
+Cleaner Submits Cleanup Proposal
           │
           ▼
-Cleaner Starts Cleanup
+Municipal Reviews the Proposal
+          │
+          ├──► REJECTED ──────► Site reopens for other cleaners
+          │
+          ├──► REVISION_REQUIRED ──► Cleaner resubmits the proposal
           │
           ▼
-Uploads Cleanup Image
+APPROVED → Cleaner Assigned
+          │
+          ▼
+Cleaner Starts Cleanup (GPS verified within 50 m)
+          │
+          ▼
+Optional Activity Log Updates
+          │
+          ▼
+Cleaner Uploads Cleanup Proof (GPS + After Image)
           │
           ▼
 Google Gemini AI Verification
           │
+          ├──► AI Rejected ──► Cleaner stays on site and re-uploads
+          │
           ▼
-Reward Generated
+AWAITING_APPROVAL
+          │
+          ▼
+Municipal Completion Review
+          │
+          ├──► Rework Requested ──► REWORK_REQUIRED
+          │
+          ▼
+COMPLETED
+          │
+          ▼
+Reward Generated (Exactly Once)
           │
           ▼
 Report Marked as Resolved
@@ -992,12 +1209,24 @@ Every cleanup assignment progresses through predefined states to ensure complete
 
 | Status | Description |
 |---------|-------------|
-| **PENDING** | Assignment created and waiting for a cleaner |
-| **CLAIMED** | Accepted by a cleaner |
-| **IN_PROGRESS** | Cleanup work has started |
-| **COMPLETED** | AI verified and successfully completed |
+| **PENDING** | Assignment created for the city corporation, open for proposals |
+| **PROPOSAL_SUBMITTED** | A cleaner has proposed a cleanup and is waiting for the municipal decision |
+| **ASSIGNED** | Proposal approved — this cleaner is authorised to execute the cleanup |
+| **CLAIMED** | Legacy state retained for older records so historical data stays readable |
+| **IN_PROGRESS** | Cleanup work has started with verified on-site GPS |
+| **REWORK_REQUIRED** | The municipality asked for the cleanup to be redone |
+| **AWAITING_APPROVAL** | AI-verified proof submitted, waiting for the municipal completion sign-off |
+| **COMPLETED** | Officially signed off by the Municipal Corporation |
 
 Maintaining these states enables accurate progress tracking while preventing conflicting operations.
+
+Guard rails enforced by the service layer:
+
+- A cleanup cannot be started unless a matching `PROPOSAL` + `APPROVED` approval record exists.
+- Only the assigned cleaner can start work, log activity, or upload proof for that assignment.
+- Start and proof uploads are rejected beyond **50 metres** from the reported site, and also when the device reports no location at all.
+- Proof cannot be uploaded before the cleanup is started or after it is officially completed.
+- Activity logs are **optional**, and are only accepted while the cleanup is actively in progress.
 
 ---
 
@@ -1007,38 +1236,63 @@ Dedicated APIs provide cleaners with a personalized workspace.
 
 Cleaners can:
 
-- View Pending Assignments
-- View Claimed Assignments
+- Browse Open Sites in their own state/city and submit proposals
+- Track Their Submitted Proposals and municipal decisions
+- View Approved Work Awaiting Start
 - View Assignments In Progress
-- View Completed Assignments
-- View Their Personal Tasks
+- Add Optional Activity Log Updates
+- Upload Cleanup Proof for Municipal Review
+- View Completed Assignments and Rewards
 - View Nearby Assignments *(prepared for future Google Maps integration)*
 
 Role-based authorization ensures only authenticated cleaners can access these resources.
 
 ---
 
+## Municipal Console
+
+The Municipal Corporation of a city gets a dedicated workspace scoped strictly to its own municipality.
+
+Corporations can:
+
+- View city dashboard statistics
+- Review the proposal queue and approve, reject, or request revision
+- Monitor active cleanups and their activity logs
+- Review AI-verified completion proof and sign off or send back for rework
+- Read the full approval history of any assignment in their city
+
+Every request resolves the corporation from the signed-in email, so a corporation can never read or decide another city's cleanups.
+
+---
+
 # 🏆 Reward System
 
-The reward system motivates cleaner participation by recognizing verified cleanup efforts instead of merely tracking completed assignments.
+The reward system motivates cleaner participation by recognizing officially verified cleanup efforts instead of merely tracking completed assignments.
 
-Rewards are generated **only after successful AI verification**.
+Rewards are generated **only after the Municipal Corporation approves the completion**, and every assignment can be rewarded **only once**.
 
 ---
 
 ## Reward Generation
 
 ```text
-Cleanup Completed
+Cleaner Uploads Proof (GPS verified)
         │
         ▼
 Gemini AI Verification
         │
         ▼
-Verification Passed
+AWAITING_APPROVAL
         │
         ▼
-Reward Created
+Municipal Completion Approval
+        │
+        ▼
+Already Rewarded? ──► Yes ──► No second reward
+        │
+        No
+        ▼
+Reward Created (+50 Points)
         │
         ▼
 Reward Points Added
@@ -1046,6 +1300,8 @@ Reward Points Added
         ▼
 Leaderboard Updated
 ```
+
+The reward ledger is keyed on the assignment, so repeated approval calls, retries, or duplicated requests can never inflate a cleaner's points.
 
 ---
 
@@ -1216,7 +1472,9 @@ Benefits:
 
 Transparency is one of the primary goals of Clean Bharat.
 
-Instead of hiding successful cleanup operations inside dashboards, the platform automatically publishes AI-verified cleanups to a dedicated public feed.
+Instead of hiding successful cleanup operations inside dashboards, the platform publishes officially completed cleanups to a dedicated public feed.
+
+A cleanup that is only AI-verified is **not** published. Publication happens after the Municipal Corporation signs off, so cleanups sent back for rework never appear as success stories.
 
 The feed remains accessible **without authentication**, allowing anyone to explore successful sanitation efforts.
 
@@ -1225,10 +1483,13 @@ The feed remains accessible **without authentication**, allowing anyone to explo
 ## Community Success Flow
 
 ```text
-Cleanup Completed
+Cleaner Uploads Proof
         │
         ▼
 Gemini Verification
+        │
+        ▼
+Municipal Completion Approval
         │
         ▼
 Reward Generated
@@ -1461,6 +1722,7 @@ src
     │
     └── resources
         ├── application.properties
+        ├── db                        # One-time SQL maintenance scripts
         └── static
 ```
 
@@ -1650,7 +1912,11 @@ The backend exposes RESTful APIs organized by functional modules.
 | Authentication | Registration, Login & JWT Authentication |
 | Garbage Reports | Create, View & Manage Garbage Reports |
 | Image Upload | Cloudinary Image Upload |
-| Municipal Corporation | Municipal Contact Management |
+| Municipal Corporation | Municipal Contact Management (Admin) |
+| Municipal Console | City-scoped proposal decisions, active cleanups & completion sign-off |
+| Cleanup Proposals | Cleaner proposals and municipal decisions |
+| Cleanup Activity Log | Optional progress updates during an active cleanup |
+| Account | Password change for users and municipal corporations |
 | Voting | Community Urgency Voting |
 | Comments | Threaded Community Discussions |
 | Analytics | Engagement Analytics & Dashboard |
@@ -1711,6 +1977,19 @@ Unit tests validate:
 - AI Validation Logic
 - Reward Calculation
 - Duplicate Detection Logic
+
+The municipal cleanup workflow is covered end to end, including:
+
+- A cleaner cannot start work before the municipality approves the proposal
+- A municipal corporation can only manage cleanups in its own city
+- Approving a proposal assigns the proposing cleaner
+- Rejected and revision-required proposals cannot be started
+- Activity logs are optional and only accepted while work is in progress
+- Completion requires evidence, and GPS proximity is enforced on start and proof upload
+- AI verification runs before the municipal completion decision
+- No reward is generated before municipal approval, and never more than one per cleanup
+- A cleanup reaches the public feed only after official completion
+- Existing Citizen, Cleaner, and Admin permissions continue to work
 
 ---
 

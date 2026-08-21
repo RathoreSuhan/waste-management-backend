@@ -5,9 +5,11 @@ import com.cleanbharat.wastemanagement.dto.ai.CleanupValidationResponse;
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
+import com.cleanbharat.wastemanagement.enums.ApprovalDecision;
+import com.cleanbharat.wastemanagement.enums.ApprovalStage;
 import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
-import com.cleanbharat.wastemanagement.enums.ReportStatus;
 import com.cleanbharat.wastemanagement.exception.*;
+import com.cleanbharat.wastemanagement.repository.CleanupApprovalRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import com.cleanbharat.wastemanagement.entity.User;
@@ -31,6 +33,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional // Ensures all database updates succeed or roll back together
 public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
     private final CleanupAssignmentRepository assignmentRepository;
+
+    // Municipal decisions: used to prove a cleaner was actually authorised
+    private final CleanupApprovalRepository approvalRepository;
+
     private final MunicipalCorporationRepository municipalRepository;
     private final UserRepository userRepository;
 
@@ -40,11 +46,14 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
     // AI validation service (Gemini implementation behind interface)
     private final AICleanupVerificationService aiCleanupVerificationService;
 
-    // Reward service
-    private final RewardService rewardService;
-
-    // Public Feed Analytics
-    private final PublicFeedAnalyticsService publicFeedAnalyticsService;
+    /*
+     * Rewards and the public feed entry are no longer created here.
+     *
+     * Both are released by CleanupApprovalService after a municipal officer
+     * approves the COMPLETION stage, so nothing is paid out - and nothing is
+     * published as a success story - before the municipality has signed the
+     * cleanup off.
+     */
 
     /*
      * Radius within which cleanup proof is accepted, in metres.
@@ -53,6 +62,23 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
      * the cleaner before the upload. This value is the one that decides.
      */
     private static final double CLEANUP_PROOF_RADIUS_METERS = 50.0;
+
+    /*
+     * Sites a cleaner may still act on: nobody has been awarded the work yet,
+     * so both PENDING and PROPOSAL_SUBMITTED stay visible for proposals.
+     */
+    private static final List<AssignmentStatus> OPEN_FOR_PROPOSAL_STATUSES =
+            List.of(AssignmentStatus.PENDING, AssignmentStatus.PROPOSAL_SUBMITTED);
+
+    /**
+     * States in which the authorised cleaner is actively working on site.
+     *
+     * REWORK_REQUIRED belongs here because a municipal rework request does not
+     * take the job away: the cleaner simply continues cleaning and re-submits
+     * proof, which runs GPS + AI again exactly like the first attempt.
+     */
+    private static final List<AssignmentStatus> WORK_IN_PROGRESS_STATUSES =
+            List.of(AssignmentStatus.IN_PROGRESS, AssignmentStatus.REWORK_REQUIRED);
 
     @Override
     public void createDefaultAssignment(GarbageReport report) {
@@ -78,62 +104,16 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         assignmentRepository.save(assignment);
     }
 
-    @Override
-    public void claimAssignment(Long assignmentId) {
-
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        String email = authentication.getName();
-
-        User cleaner = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException("Cleaner not found"));
-
-        if (cleaner.getRole() != Role.ROLE_CLEANER) {
-            throw new InvalidAssignmentStateException("Only cleaners can claim assignments.");
-        }
-
-        CleanupAssignment assignment = assignmentRepository.findById(assignmentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Assignment not found"));
-
-        if (assignment.getCleaner() != null) {
-            throw new AssignmentAlreadyClaimedException("Assignment already claimed.");
-        }
-
-        if (assignment.getStatus() != AssignmentStatus.PENDING) {
-            throw new InvalidAssignmentStateException("Only pending assignments can be claimed.");
-        }
-
-        /*
-         * Ensure cleaner belongs to the same
-         * city and state as the garbage report.
-         */
-        validateCleanerLocation(cleaner, assignment.getReport());
-
-        // Claim assignment
-        assignment.setCleaner(cleaner);
-        assignment.setStatus(AssignmentStatus.CLAIMED);
-        assignment.setClaimedAt(LocalDateTime.now());
-
-        /*
-         * The report is no longer waiting for a cleanup team, so it leaves the
-         * pending queue the moment a cleaner takes ownership of the work.
-         *
-         * Written here rather than in startCleanup() because claiming is the
-         * first irreversible step, and because ReportStatus has no separate
-         * CLAIMED value - both CLAIMED and IN_PROGRESS assignments read as one
-         * "work underway" state to citizens.
-         *
-         * The report is a managed entity inside this transaction, so the
-         * change flushes without an explicit report repository save (same
-         * pattern as resolveCleanupAssignment()).
-         */
-        assignment.getReport().setStatus(ReportStatus.IN_PROGRESS);
-
-        assignmentRepository.save(assignment);
-    }
+    /*
+     * claimAssignment() was removed with the municipal-authorized workflow.
+     *
+     * A cleaner can no longer self-assign a site: they inspect it and submit a
+     * proposal (see CleanupProposalService), and a municipal officer decides
+     * who is awarded the work.
+     */
 
     @Override
-    public void startCleanup(Long assignmentId) {
+    public void startCleanup(Long assignmentId, Double latitude, Double longitude) { // start location evidence
 
         // Logged-in user
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -150,8 +130,8 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                         .orElseThrow(() -> new ResourceNotFoundException("Assignment not found"));
 
         // Assignment must already be claimed
-        if (assignment.getStatus() != AssignmentStatus.CLAIMED) {
-            throw new InvalidAssignmentStateException("Only claimed assignments can be started.");
+        if (assignment.getStatus() != AssignmentStatus.ASSIGNED && assignment.getStatus() != AssignmentStatus.CLAIMED) { // ASSIGNED = municipality approved; CLAIMED kept for legacy rows
+            throw new InvalidAssignmentStateException("Only approved cleanups can be started.");
         }
 
         // Logged-in cleaner must be the assigned cleaner
@@ -161,9 +141,38 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
             throw new UnauthorizedAssignmentAccessException("You are not assigned to this cleanup task.");
         }
 
+        /*
+         * A cleaner may only begin once the municipality has authorised their
+         * proposal. Legacy CLAIMED rows predate the approval workflow, so they
+         * are exempt from this check.
+         */
+        if (assignment.getStatus() == AssignmentStatus.ASSIGNED
+                && !approvalRepository.existsByAssignmentAndStageAndDecision(
+                        assignment, ApprovalStage.PROPOSAL, ApprovalDecision.APPROVED)) {
+
+            throw new InvalidAssignmentStateException(
+                    "This cleanup has not been authorised by the Municipal Corporation yet."
+            );
+        }
+
+        /*
+         * Start-of-work location evidence.
+         *
+         * Reuses the same 50 m rule as the proof upload, so "work started" can
+         * only be recorded from the site itself.
+         */
+        validateCleanerProximity(assignment.getReport(), latitude, longitude);
+
         // Update assignment
         assignment.setStatus(AssignmentStatus.IN_PROGRESS);
         assignment.setStartedAt(LocalDateTime.now());
+
+        // Persist where the cleaner stood when they began
+        assignment.setStartLatitude(latitude);
+        assignment.setStartLongitude(longitude);
+        assignment.setStartDistanceMeters(
+                distanceFromReport(assignment.getReport(), latitude, longitude)); // null when the report has no coordinates
+
         assignmentRepository.save(assignment);
     }
 
@@ -205,12 +214,18 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         }
 
         /*
-         * Cleanup must be started before
-         * uploading completion image.
+         * Cleanup must be started before uploading completion image.
+         *
+         * REWORK_REQUIRED is accepted too: the municipality sent the work back,
+         * so the same cleaner continues on site and re-submits proof through
+         * this very method, which re-runs GPS and AI from scratch.
          */
-        if (assignment.getStatus() != AssignmentStatus.IN_PROGRESS) {
+        if (!WORK_IN_PROGRESS_STATUSES.contains(assignment.getStatus())) {
             throw new CleanupNotStartedException("Cleanup must be started before uploading the completion image.");
         }
+
+        // Remembered so a rejected re-submission stays labelled as a re-do
+        AssignmentStatus workingStatus = assignment.getStatus();
 
         /*
          * Proof of presence.
@@ -308,13 +323,12 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         else {
 
             /*
-             * Keep assignment
-             * IN_PROGRESS
-             *
-             * Cleaner can upload
-             * another image.
+             * Keep the assignment in whichever working state it arrived in
+             * (IN_PROGRESS on a first attempt, REWORK_REQUIRED on a re-do) so
+             * the cleaner can upload another image without the municipal
+             * rework instruction disappearing from their task list.
              */
-            assignment.setStatus(AssignmentStatus.IN_PROGRESS);
+            assignment.setStatus(workingStatus);
         }
 
         assignmentRepository.save(assignment);
@@ -335,7 +349,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 // User-friendly message
                 .message(
                         Boolean.TRUE.equals(assignment.getAiVerified())
-                                ? "Cleanup verified successfully. The report has been resolved."
+                                ? "Cleanup verified successfully. It is now awaiting Municipal Corporation approval."
                                 : "The cleanup could not be verified with sufficient confidence. Please upload another clear image from the same location after completing the cleanup."
                 )
                 .build();
@@ -350,7 +364,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         // Fetch all assignments of this cleaner
         return assignmentRepository.findByCleaner(cleaner)
                 .stream()
-                .map(this::mapToResponse)   // Entity → DTO
+                .map(this::mapToResponse)   // Entity â†’ DTO
                 .toList();
     }
 
@@ -361,7 +375,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         User cleaner = getLoggedInCleaner();
 
         return assignmentRepository
-                .findByCleanerIsNullAndStatus(AssignmentStatus.PENDING)
+                .findByCleanerIsNullAndStatusInOrderByIdDesc(OPEN_FOR_PROPOSAL_STATUSES)
                 .stream()
 
                 // Same state
@@ -403,8 +417,9 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         // Currently logged-in cleaner
         User cleaner = getLoggedInCleaner();
 
+        // A first attempt and a municipal re-do are both live work
         return assignmentRepository
-                .findByCleanerAndStatus(cleaner, AssignmentStatus.IN_PROGRESS)
+                .findByCleanerAndStatusIn(cleaner, WORK_IN_PROGRESS_STATUSES)
                 .stream()
                 .map(this::mapToResponse)
                 .toList();
@@ -438,7 +453,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
          * and sort by distance.
          */
         return assignmentRepository
-                .findByCleanerIsNullAndStatus(AssignmentStatus.PENDING)
+                .findByCleanerIsNullAndStatusInOrderByIdDesc(OPEN_FOR_PROPOSAL_STATUSES)
                 .stream()
 
                 // Same state
@@ -462,31 +477,27 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
     }
 
     /**
-     * Marks a cleanup assignment as successfully completed.
-     * This method centralizes all completion-related updates.
+     * Hands an AI-verified cleanup over to the Municipal Corporation for sign-off.
+     *
+     * The cleanup is not finished yet: COMPLETED, report resolution, the
+     * cleaner's reward and the public feed entry are all released by
+     * CleanupApprovalService once an officer approves the COMPLETION stage.
      */
     private void resolveCleanupAssignment(CleanupAssignment assignment) {
 
-        // Mark assignment as completed
-        assignment.setStatus(AssignmentStatus.COMPLETED);
+        // Proof accepted by AI, now queued for municipal approval
+        assignment.setStatus(AssignmentStatus.AWAITING_APPROVAL);
 
-        // Store completion time
+        // Moment the cleaner submitted verified proof
         assignment.setCompletedAt(LocalDateTime.now());
 
-        // Resolve original garbage report
-        assignment.getReport().setStatus(ReportStatus.RESOLVED);
-
         /*
-         * Reward the cleaner.
-         *
-         * RewardService is responsible for:
-         * 1. Creating RewardHistory
-         * 2. Updating total reward points
+         * The public feed entry used to be created here, the moment the AI
+         * accepted the photograph. That published the cleanup as a finished
+         * success story while the municipality had not yet looked at it - and
+         * a cleanup sent back for rework would already be on the feed. It is
+         * now created only on municipal approval.
          */
-        rewardService.rewardCleaner(assignment);
-
-        // Initialize Public Feed Analytics
-        publicFeedAnalyticsService.initializeAnalytics(assignment);
     }
 
     /**
@@ -583,6 +594,30 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
 
     /**
+     * Distance in metres from a captured position to the reported location.
+     *
+     * Returns null when either side has no coordinates, so an unmeasurable
+     * reading is stored as "unknown" rather than a misleading zero.
+     */
+    private Double distanceFromReport(GarbageReport report, Double latitude, Double longitude) {
+
+        if (latitude == null || longitude == null
+                || !Double.isFinite(latitude) || !Double.isFinite(longitude)
+                || report.getLatitude() == null || report.getLongitude() == null) {
+
+            return null;
+        }
+
+        return GeoLocationUtil.calculateDistanceMeters(
+                latitude,
+                longitude,
+                report.getLatitude(),
+                report.getLongitude()
+        );
+    }
+
+
+    /**
      * Converts CleanupAssignment entity into Dashboard DTO.
      */
     private CleanupAssignmentResponse mapToResponse(CleanupAssignment assignment) {
@@ -635,6 +670,17 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 .claimedAt(assignment.getClaimedAt())
                 .startedAt(assignment.getStartedAt())
                 .completedAt(assignment.getCompletedAt())
+
+                // Start-of-work location evidence (Phase 16)
+                .startLatitude(assignment.getStartLatitude())
+                .startLongitude(assignment.getStartLongitude())
+
+                // Optional diary size, so the task card can label its button
+                .activityLogCount(
+                        assignment.getActivityLogs() != null
+                                ? assignment.getActivityLogs().size()
+                                : 0
+                )
 
                 // Report creation time
                 .reportCreatedAt(assignment.getReport().getCreatedAt())

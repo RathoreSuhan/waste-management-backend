@@ -19,32 +19,29 @@ public class CleanupAssignmentController {
     // Cleanup Assignment Service
     private final CleanupAssignmentService cleanupAssignmentService;
 
-    /**
-     * Cleaner claims a pending assignment.
-     */
-    @PostMapping("/{assignmentId}/claim")
-    public ResponseEntity<SuccessResponse> claimAssignment(@PathVariable Long assignmentId) {
-
-        // Delegate business logic to service
-        cleanupAssignmentService.claimAssignment(assignmentId);
-
-        // Build success response
-        SuccessResponse response = SuccessResponse.builder()
-                .message("Assignment claimed successfully.")
-                .timestamp(LocalDateTime.now())
-                .build();
-
-        return ResponseEntity.ok(response);
-    }
+    // Claim endpoint removed: cleaners now submit proposals via /api/cleanup-proposals
 
     /**
-     * Cleaner started the claimed assignment.
+     * Authorised cleaner starts the municipality-approved cleanup.
+     *
+     * The position is start-of-work location evidence, so the same 50 m rule
+     * used for the proof upload applies here.
      */
     @PostMapping("/{assignmentId}/start")
-    public ResponseEntity<SuccessResponse> startCleanup(@PathVariable Long assignmentId) {
+    public ResponseEntity<SuccessResponse> startCleanup(
+            @PathVariable Long assignmentId,
+
+            /*
+             * Optional at binding level only, exactly like the proof upload:
+             * a missing fix should reach the service so the cleaner gets the
+             * "allow location access" guidance instead of a generic 400.
+             */
+            @RequestParam(value = "latitude", required = false) Double latitude,
+            @RequestParam(value = "longitude", required = false) Double longitude
+    ) {
 
         // Delegate business logic
-        cleanupAssignmentService.startCleanup(assignmentId);
+        cleanupAssignmentService.startCleanup(assignmentId, latitude, longitude);
 
         // Success response
         SuccessResponse response = SuccessResponse.builder()
