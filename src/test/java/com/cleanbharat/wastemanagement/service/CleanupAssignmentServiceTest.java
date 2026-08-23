@@ -140,6 +140,41 @@ class CleanupAssignmentServiceTest {
     }
 
     @Test
+    void startingWorkMovesTheCitizensReportToInProgress() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.ASSIGNED, cleaner);
+        assignment.getReport().setStatus(ReportStatus.PENDING); // citizen still reads "Pending" before boots are on site
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.existsByAssignmentAndStageAndDecision(
+                assignment, ApprovalStage.PROPOSAL, ApprovalDecision.APPROVED)).thenReturn(true);
+
+        cleanupAssignmentService.startCleanup(ASSIGNMENT_ID, SITE_LATITUDE, SITE_LONGITUDE);
+
+        // The report must travel with the work, or the citizen / public register / dashboard all keep saying PENDING
+        assertEquals(ReportStatus.IN_PROGRESS, assignment.getReport().getStatus());
+    }
+
+    @Test
+    void restartingWorkNeverReopensAnAlreadyResolvedReport() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.ASSIGNED, cleaner);
+        assignment.getReport().setStatus(ReportStatus.RESOLVED); // municipality has already signed this site off
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.existsByAssignmentAndStageAndDecision(
+                assignment, ApprovalStage.PROPOSAL, ApprovalDecision.APPROVED)).thenReturn(true);
+
+        cleanupAssignmentService.startCleanup(ASSIGNMENT_ID, SITE_LATITUDE, SITE_LONGITUDE);
+
+        assertEquals(ReportStatus.RESOLVED, assignment.getReport().getStatus()); // only PENDING moves forward
+    }
+
+    @Test
     void aSiteNotYetAwardedToAnyoneCannotBeStarted() {
         User cleaner = cleaner(5L, CLEANER_EMAIL);
         // Proposal submitted but rejected / still undecided: nobody has been awarded the work

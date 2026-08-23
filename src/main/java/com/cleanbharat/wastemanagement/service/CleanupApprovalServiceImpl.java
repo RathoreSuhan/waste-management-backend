@@ -35,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional; // latest ledger decision may be absent on a first-time bid
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -133,6 +134,17 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
                 assignment, ApprovalStage.PROPOSAL, ApprovalDecision.APPROVED)) {
             throw new InvalidProposalStateException(
                     "A cleaner has already been authorised for this cleanup. No further proposal approvals are allowed."
+            );
+        }
+
+        /*
+         * A revision request hands the ball to the cleaner. Until they resubmit
+         * (which appends REVISION_SUBMITTED) no second decision may be recorded
+         * on this proposal, so the same cleaner cannot be sent two answers.
+         */
+        if (isAwaitingRevision(proposal)) {
+            throw new InvalidProposalStateException(
+                    "You have already asked this cleaner for a revision. Wait until the revised proposal arrives."
             );
         }
 
@@ -497,10 +509,39 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
                 .remarks(proposal.getRemarks())
                 // Review state
                 .status(proposal.getStatus() != null ? proposal.getStatus().name() : null)
+                // Newest decision on this bid: the review buttons stay locked while it
+                // reads REVISION_REQUIRED and open again on REVISION_SUBMITTED
+                .latestDecision(latestProposalDecision(proposal)
+                        .map(CleanupApproval::getDecision)
+                        .map(ApprovalDecision::name)
+                        .orElse(null))
+                .latestDecisionAt(latestProposalDecision(proposal)
+                        .map(CleanupApproval::getDecidedAt)
+                        .orElse(null))
                 .submittedAt(proposal.getSubmittedAt())
                 .updatedAt(proposal.getUpdatedAt())
                 .totalProposalsForAssignment(proposalRepository.countByAssignment(assignment))
                 .build();
+    }
+
+    /** Newest proposal-stage decision recorded against one bid, if any. */
+    private Optional<CleanupApproval> latestProposalDecision(CleanupProposal proposal) {
+        return approvalRepository
+                .findFirstByProposalAndStageOrderByDecidedAtDescIdDesc(proposal, ApprovalStage.PROPOSAL);
+    }
+
+    /**
+     * True while the officer is waiting on a revised proposal from the cleaner.
+     *
+     * Read from the append-only ledger rather than the proposal status, because
+     * a resubmission puts the row back to SUBMITTED and would otherwise look
+     * indistinguishable from a first-time bid.
+     */
+    private boolean isAwaitingRevision(CleanupProposal proposal) {
+        return latestProposalDecision(proposal)
+                .map(CleanupApproval::getDecision)
+                .filter(decision -> decision == ApprovalDecision.REVISION_REQUIRED)
+                .isPresent();
     }
 
     private CleanupApprovalResponse mapApproval(CleanupApproval approval) {

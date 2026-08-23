@@ -8,6 +8,7 @@ import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.enums.ApprovalDecision;
 import com.cleanbharat.wastemanagement.enums.ApprovalStage;
 import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
+import com.cleanbharat.wastemanagement.enums.ReportStatus; // citizen-facing status kept in step with the work
 import com.cleanbharat.wastemanagement.exception.*;
 import com.cleanbharat.wastemanagement.repository.CleanupApprovalRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
@@ -166,6 +167,15 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         // Update assignment
         assignment.setStatus(AssignmentStatus.IN_PROGRESS);
         assignment.setStartedAt(LocalDateTime.now());
+
+        /*
+         * The citizen's report must travel with the work.
+         *
+         * Without this the report stayed PENDING everywhere (report page, public
+         * register and the citizen dashboard) even though cleaning had begun.
+         * RESOLVED reports are left alone so a re-start can never reopen them.
+         */
+        markReportInProgress(assignment.getReport());
 
         // Persist where the cleaner stood when they began
         assignment.setStartLatitude(latitude);
@@ -614,6 +624,28 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 report.getLatitude(),
                 report.getLongitude()
         );
+    }
+
+
+    /**
+     * Moves the citizen's report onto the IN_PROGRESS shelf once work begins.
+     *
+     * ReportStatus is a separate axis from AssignmentStatus, so it has to be
+     * advanced explicitly; the report page, the public register and the citizen
+     * dashboard all read this field. No repository call is needed because the
+     * entity is managed inside this @Transactional service, so JPA flushes the
+     * change on commit (same pattern as the RESOLVED flip on municipal sign-off).
+     */
+    private void markReportInProgress(GarbageReport report) {
+
+        if (report == null) {
+            return; // nothing to advance
+        }
+
+        // Only PENDING moves forward: RESOLVED must never be reopened by a re-start
+        if (report.getStatus() == ReportStatus.PENDING) {
+            report.setStatus(ReportStatus.IN_PROGRESS); // cleaning has actually started on site
+        }
     }
 
 

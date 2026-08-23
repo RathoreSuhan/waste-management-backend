@@ -2,6 +2,7 @@ package com.cleanbharat.wastemanagement.repository;
 
 import com.cleanbharat.wastemanagement.entity.CleanupApproval;
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
+import com.cleanbharat.wastemanagement.entity.CleanupProposal;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.ApprovalDecision;
 import com.cleanbharat.wastemanagement.enums.ApprovalStage;
@@ -29,6 +30,17 @@ public interface CleanupApprovalRepository extends JpaRepository<CleanupApproval
     Optional<CleanupApproval> findFirstByAssignmentAndStageAndDecisionOrderByDecidedAtDesc(CleanupAssignment assignment,
                                                                                           ApprovalStage stage,
                                                                                           ApprovalDecision decision);
+
+    /**
+     * Newest decision recorded against one proposal at the given stage.
+     *
+     * Drives the review lock: while this reads REVISION_REQUIRED the officer is
+     * waiting for the cleaner, and once the cleaner resubmits the row that
+     * follows reads REVISION_SUBMITTED and the buttons open again. The id is the
+     * tie-breaker because two rows can share the same decidedAt second.
+     */
+    Optional<CleanupApproval> findFirstByProposalAndStageOrderByDecidedAtDescIdDesc(CleanupProposal proposal,
+                                                                                   ApprovalStage stage);
 
     // Deletion guard: an officer who has taken decisions cannot be wiped silently
     boolean existsByDecidedBy(User decidedBy);

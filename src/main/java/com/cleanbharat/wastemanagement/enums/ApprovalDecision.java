@@ -9,5 +9,9 @@ public enum ApprovalDecision {
     REJECTED,
 
     // Municipality wants changes (proposal edit or cleanup rework)
-    REVISION_REQUIRED
+    REVISION_REQUIRED,
+
+    // Cleaner has returned the corrected plan, so the review buttons unlock again
+    // Recorded by the system on resubmission, never chosen by a municipal officer
+    REVISION_SUBMITTED
 }

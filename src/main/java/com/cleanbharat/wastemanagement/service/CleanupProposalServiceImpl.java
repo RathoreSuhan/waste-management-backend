@@ -2,14 +2,18 @@ package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.CleanupProposalResponse;
 import com.cleanbharat.wastemanagement.dto.CreateProposalRequest;
+import com.cleanbharat.wastemanagement.entity.CleanupApproval; // decision ledger row appended on resubmission
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
 import com.cleanbharat.wastemanagement.entity.CleanupProposal;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.entity.User;
+import com.cleanbharat.wastemanagement.enums.ApprovalDecision; // REVISION_SUBMITTED reopens the officer's buttons
+import com.cleanbharat.wastemanagement.enums.ApprovalStage;
 import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
 import com.cleanbharat.wastemanagement.enums.ProposalStatus;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.exception.*;
+import com.cleanbharat.wastemanagement.repository.CleanupApprovalRepository; // append-only municipal decisions
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupProposalRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
@@ -23,6 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -33,6 +38,7 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
     private final CleanupProposalRepository proposalRepository;
     private final CleanupAssignmentRepository assignmentRepository;
     private final UserRepository userRepository;
+    private final CleanupApprovalRepository approvalRepository; // reads and appends the decision ledger
     private final CloudinaryService cloudinaryService; // optional inspection evidence upload
 
     /*
@@ -93,7 +99,8 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
         if (existing != null) {
             // Re-proposing after a withdrawal: same row, freshly captured visit and plan
             existing.setSubmittedAt(LocalDateTime.now()); // ranks as a new bid in the officer's queue
-            proposal = applyPlanDetails(existing, request, inspectionImageUrl, distanceMeters);
+            // A re-proposal is a brand new visit, so it always carries a freshly captured fix
+            proposal = applyPlanDetails(existing, request, inspectionImageUrl, distanceMeters, true);
         } else {
             proposal = CleanupProposal.builder()
                     .assignment(assignment)
@@ -145,15 +152,33 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
         CleanupAssignment assignment = proposal.getAssignment();
         validateAssignmentOpen(assignment); // site may have been awarded meanwhile
 
-        double distanceMeters = validateInspectionProximity(assignment.getReport(),
-                request.getInspectionLatitude(), request.getInspectionLongitude());
+        // The officer is waiting for this edit, so the resubmission must unlock their review buttons
+        boolean answeringRevisionRequest = proposal.getStatus() == ProposalStatus.REVISION_REQUIRED;
+
+        /*
+         * The cleaner already proved a real visit when this proposal was first
+         * filed, so a revision may reuse the fix stored on the row. A new reading
+         * is taken only when the cleaner chooses to capture their position again.
+         */
+        boolean freshReading = request.getInspectionLatitude() != null && request.getInspectionLongitude() != null;
+        Double latitude = freshReading ? request.getInspectionLatitude() : proposal.getInspectionLatitude();
+        Double longitude = freshReading ? request.getInspectionLongitude() : proposal.getInspectionLongitude();
+
+        // The 50 m rule runs either way, so a stored fix can never be used to bypass it
+        double distanceMeters = validateInspectionProximity(assignment.getReport(), latitude, longitude);
 
         String newImageUrl = uploadInspectionImage(request.getInspectionImage());
 
         // Same overwrite a revived proposal gets, so the two paths cannot drift apart
-        applyPlanDetails(proposal, request, newImageUrl, distanceMeters);
+        applyPlanDetails(proposal, request, newImageUrl, distanceMeters, freshReading);
 
-        return mapToResponse(proposalRepository.save(proposal));
+        CleanupProposal saved = proposalRepository.save(proposal);
+
+        if (answeringRevisionRequest) {
+            recordRevisionSubmitted(saved); // tells the municipal queue the answer has arrived
+        }
+
+        return mapToResponse(saved);
     }
 
     @Override
@@ -277,11 +302,15 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
      * Two paths mean the same thing to an officer - a revision of a live
      * proposal, and a re-proposal on a row the cleaner had withdrawn - so both
      * are filled in here and both end up SUBMITTED, back in the review queue.
+     *
+     * freshReading is false when a revision reuses the fix already on the row,
+     * in which case the recorded visit must be left exactly as it was.
      */
     private CleanupProposal applyPlanDetails(CleanupProposal proposal,
                                              CreateProposalRequest request,
                                              String newImageUrl,
-                                             double distanceMeters) {
+                                             double distanceMeters,
+                                             boolean freshReading) {
 
         if (newImageUrl != null) {
             String oldImageUrl = proposal.getInspectionImageUrl();
@@ -291,10 +320,13 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
             }
         }
 
-        proposal.setInspectionLatitude(request.getInspectionLatitude());
-        proposal.setInspectionLongitude(request.getInspectionLongitude());
+        if (freshReading) { // only a re-captured position may move the recorded visit
+            proposal.setInspectionLatitude(request.getInspectionLatitude());
+            proposal.setInspectionLongitude(request.getInspectionLongitude());
+            proposal.setInspectedAt(LocalDateTime.now()); // server clock, cleaner cannot backdate a visit
+        }
+        // Measured against whichever fix was verified above, so the stored distance stays truthful
         proposal.setInspectionDistanceMeters(distanceMeters >= 0 ? distanceMeters : null);
-        proposal.setInspectedAt(LocalDateTime.now()); // a new plan always means a new visit
         proposal.setSiteObservations(request.getSiteObservations());
         proposal.setEstimatedDurationDays(request.getEstimatedDurationDays());
         proposal.setManpowerCount(request.getManpowerCount());
@@ -309,11 +341,68 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
         return proposal;
     }
 
+    /*
+     * Appends a REVISION_SUBMITTED row so the office that asked for changes can
+     * see the answer arrived and act on it again. cleanup_approvals is
+     * append-only, so the earlier REVISION_REQUIRED row survives as history.
+     *
+     * The row is keyed on the proposal, so the queue reads the signal for THIS
+     * bid alone and the three officer buttons unlock only where they should.
+     */
+    private void recordRevisionSubmitted(CleanupProposal proposal) {
+
+        CleanupAssignment assignment = proposal.getAssignment();
+
+        // Newest proposal-stage row for this bid: the request we are answering
+        Optional<CleanupApproval> lastDecision = approvalRepository
+                .findFirstByProposalAndStageOrderByDecidedAtDescIdDesc(proposal, ApprovalStage.PROPOSAL);
+
+        // Only a standing REVISION_REQUIRED may be answered, so no duplicate or out-of-order signal can land
+        boolean revisionWasRequested = lastDecision
+                .map(row -> row.getDecision() == ApprovalDecision.REVISION_REQUIRED)
+                .orElse(false);
+
+        if (!revisionWasRequested) {
+            return; // nothing was asked for on this bid, so there is nothing to answer
+        }
+
+        /*
+         * municipal_corporation_id is NOT NULL. A null here would raise
+         * DataIntegrityViolationException and roll back the cleaner's whole
+         * resubmission, so the office is resolved defensively: the assignment
+         * first, then the office that actually raised the request.
+         */
+        var office = assignment.getAssignedMunicipalCorporation() != null
+                ? assignment.getAssignedMunicipalCorporation() // office holding the site
+                : lastDecision.get().getMunicipalCorporation(); // office that asked for changes
+
+        if (office == null) {
+            return; // no office to file under: skip the note rather than lose the edit
+        }
+
+        approvalRepository.save(CleanupApproval.builder()
+                .assignment(assignment)
+                .proposal(proposal) // proposal-scoped, so rival bids stay unaffected
+                .stage(ApprovalStage.PROPOSAL)
+                .decision(ApprovalDecision.REVISION_SUBMITTED)
+                .municipalCorporation(office) // office that raised the request
+                .remarks("Cleaner resubmitted the revised proposal.") // system note, no officer decided this
+                .build());
+    }
+
     // Flattens entity graph into the cleaner-facing DTO
     private CleanupProposalResponse mapToResponse(CleanupProposal proposal) {
 
         CleanupAssignment assignment = proposal.getAssignment();
         GarbageReport report = assignment.getReport();
+
+        /*
+         * Newest proposal-stage decision on THIS bid. Both dashboards read it to
+         * agree on who holds the ball: the officer while it says
+         * REVISION_REQUIRED, the cleaner once it says REVISION_SUBMITTED.
+         */
+        Optional<CleanupApproval> latestDecision = approvalRepository
+                .findFirstByProposalAndStageOrderByDecidedAtDescIdDesc(proposal, ApprovalStage.PROPOSAL);
 
         return CleanupProposalResponse.builder()
                 .proposalId(proposal.getId())
@@ -346,6 +435,9 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
                 .proposedStartDate(proposal.getProposedStartDate())
                 .remarks(proposal.getRemarks())
                 .status(proposal.getStatus() != null ? proposal.getStatus().name() : null)
+                .latestDecision(latestDecision.map(CleanupApproval::getDecision) // locks or frees the review buttons
+                        .map(ApprovalDecision::name).orElse(null))
+                .latestDecisionAt(latestDecision.map(CleanupApproval::getDecidedAt).orElse(null))
                 .submittedAt(proposal.getSubmittedAt())
                 .updatedAt(proposal.getUpdatedAt())
                 .totalProposalsForAssignment(proposalRepository.countByAssignment(assignment)) // competition signal

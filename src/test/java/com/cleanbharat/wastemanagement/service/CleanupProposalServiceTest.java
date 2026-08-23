@@ -22,6 +22,7 @@ import com.cleanbharat.wastemanagement.exception.CleanerTooFarFromSiteException;
 import com.cleanbharat.wastemanagement.exception.DuplicateProposalException;
 import com.cleanbharat.wastemanagement.exception.InvalidProposalStateException;
 import com.cleanbharat.wastemanagement.exception.UnauthorizedAssignmentAccessException;
+import com.cleanbharat.wastemanagement.repository.CleanupApprovalRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupProposalRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
@@ -60,6 +61,9 @@ class CleanupProposalServiceTest {
 
     @Mock
     private CleanupProposalRepository proposalRepository;
+
+    @Mock
+    private CleanupApprovalRepository approvalRepository; // the service now reads and appends decision ledger rows
 
     @Mock
     private CleanupAssignmentRepository assignmentRepository;

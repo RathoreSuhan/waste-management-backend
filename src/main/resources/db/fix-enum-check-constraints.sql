@@ -122,9 +122,10 @@ ALTER TABLE cleanup_approvals
 ALTER TABLE cleanup_approvals
     ADD CONSTRAINT cleanup_approvals_decision_check
         CHECK (decision IN (
-                            'APPROVED',         -- officer accepted
-                            'REJECTED',         -- officer refused
-                            'REVISION_REQUIRED' -- officer sent it back for changes
+                            'APPROVED',          -- officer accepted
+                            'REJECTED',          -- officer refused
+                            'REVISION_REQUIRED', -- officer sent it back for changes
+                            'REVISION_SUBMITTED' -- cleaner returned the corrected plan (recorded by the system)
             ));
 
 -- garbage_reports.status -> enums/ReportStatus

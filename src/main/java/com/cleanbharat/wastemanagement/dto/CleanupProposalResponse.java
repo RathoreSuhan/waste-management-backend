@@ -60,6 +60,18 @@ public class CleanupProposalResponse {
 
     // Lifecycle
     private String status;
+
+    /**
+     * Newest municipal decision recorded against THIS proposal at the proposal
+     * stage (APPROVED / REJECTED / REVISION_REQUIRED / REVISION_SUBMITTED).
+     *
+     * Both dashboards read it to agree on whose turn it is: the officer's review
+     * buttons stay locked while it reads REVISION_REQUIRED, and the cleaner's
+     * card shows "revision resubmitted" once it reads REVISION_SUBMITTED.
+     */
+    private String latestDecision;
+    private LocalDateTime latestDecisionAt; // when that decision was recorded
+
     private LocalDateTime submittedAt;
     private LocalDateTime updatedAt;
 

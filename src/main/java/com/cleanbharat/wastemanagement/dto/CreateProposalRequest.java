@@ -34,15 +34,20 @@ public class CreateProposalRequest {
     private MultipartFile inspectionImage;
 
     /**
-     * Where the cleaner stood while inspecting. Required: the platform
-     * checks this against the reported location before accepting.
+     * Where the cleaner stood while inspecting.
+     *
+     * Left optional at the field level on purpose. A first proposal has no
+     * stored fix, so the service refuses one that arrives without coordinates.
+     * A revision, however, already carries an accepted inspection on the row:
+     * the cleaner walked to the site once and that reading was verified, so
+     * omitting these two fields means "keep the position already on file"
+     * rather than "no position at all". Either way the service re-measures the
+     * 50 m rule against whichever fix it ends up using, so nothing is bypassed.
      */
-    @NotNull(message = "Inspection latitude is required")
     @DecimalMin(value = "-90.0", message = "Inspection latitude must be between -90 and 90")
     @DecimalMax(value = "90.0", message = "Inspection latitude must be between -90 and 90")
     private Double inspectionLatitude;
 
-    @NotNull(message = "Inspection longitude is required")
     @DecimalMin(value = "-180.0", message = "Inspection longitude must be between -180 and 180")
     @DecimalMax(value = "180.0", message = "Inspection longitude must be between -180 and 180")
     private Double inspectionLongitude;
