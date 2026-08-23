@@ -5,6 +5,9 @@ import com.cleanbharat.wastemanagement.entity.CleanupProposal;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.ProposalStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -70,4 +73,34 @@ public interface CleanupProposalRepository extends JpaRepository<CleanupProposal
      * same image cleanup reason.
      */
     List<CleanupProposal> findByCleaner(User cleaner);
+
+    /**
+     * Just the inspection photo links of one assignment's proposals.
+     *
+     * Deletion only needs the URLs, not whole entities with their cleaner and
+     * assignment graphs, so this projection keeps the cascade light even when a
+     * popular site collected many competing offers. Blank and missing links are
+     * filtered out here so the caller never has to check again.
+     */
+    @Query("""
+            select p.inspectionImageUrl
+            from CleanupProposal p
+            where p.assignment = :assignment
+              and p.inspectionImageUrl is not null
+              and p.inspectionImageUrl <> ''
+            """)
+    List<String> findInspectionImageUrlsByAssignment(@Param("assignment") CleanupAssignment assignment);
+
+    /**
+     * Removes every proposal of one assignment in a single statement.
+     *
+     * The assignment does cascade to its proposals through the entity mapping,
+     * but that path loads and deletes each row one by one and only runs when the
+     * assignment itself is removed. Deleting them explicitly, right after the
+     * approvals that reference them, keeps the order predictable and the report
+     * deletion cheap.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from CleanupProposal p where p.assignment = :assignment")
+    int deleteByAssignment(@Param("assignment") CleanupAssignment assignment);
 }

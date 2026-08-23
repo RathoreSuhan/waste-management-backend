@@ -57,9 +57,16 @@ public class CleanupApproval {
     @JoinColumn(name = "municipal_corporation_id", nullable = false)
     private MunicipalCorporation municipalCorporation;
 
-    // The municipal officer who actually took the decision (accountability)
+    /*
+     * The municipal officer who personally took the decision.
+     *
+     * Optional on purpose: a Municipal Corporation signs in with its own
+     * official account, so there is no separate officer User row to point at.
+     * The corporation above is therefore the authority of record, and this
+     * column only fills in if per-officer logins are introduced later.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "decided_by", nullable = false)
+    @JoinColumn(name = "decided_by") // nullable: the corporation itself is the decider today
     private User decidedBy;
 
     // Optional justification / instructions shown to the cleaner

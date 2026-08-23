@@ -4,6 +4,8 @@ import com.cleanbharat.wastemanagement.entity.CleanupActivityLog;
 import com.cleanbharat.wastemanagement.entity.CleanupAssignment;
 import com.cleanbharat.wastemanagement.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -26,4 +28,20 @@ public interface CleanupActivityLogRepository extends JpaRepository<CleanupActiv
     void deleteByAssignment(CleanupAssignment assignment);
 
     void deleteByCleaner(User cleaner);
+
+    /**
+     * Only the diary photo links of one assignment.
+     *
+     * Deletion needs the URLs to clear Cloudinary, and nothing else from the
+     * entries, so this avoids loading a whole multi-day timeline just to read
+     * one field per row. Empty and missing links are filtered out here.
+     */
+    @Query("""
+            select l.imageUrl
+            from CleanupActivityLog l
+            where l.assignment = :assignment
+              and l.imageUrl is not null
+              and l.imageUrl <> ''
+            """)
+    List<String> findImageUrlsByAssignment(@Param("assignment") CleanupAssignment assignment);
 }

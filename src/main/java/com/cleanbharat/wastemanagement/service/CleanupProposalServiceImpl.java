@@ -325,6 +325,12 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
                 .assignmentStatus(assignment.getStatus() != null ? assignment.getStatus().name() : null)
                 .cleanerId(proposal.getCleaner().getId())
                 .cleanerName(proposal.getCleaner().getName())
+                // Reviewers weigh a registered contractor differently from a lone
+                // individual, so carry the bidder's category alongside the name
+                .cleanerType(proposal.getCleaner().getCleanerType() != null
+                        ? proposal.getCleaner().getCleanerType().name()
+                        : null)
+                .cleanerOrganization(proposal.getCleaner().getOrganizationName()) // null for individuals
                 .inspectionImageUrl(proposal.getInspectionImageUrl())
                 .inspectionLatitude(proposal.getInspectionLatitude())
                 .inspectionLongitude(proposal.getInspectionLongitude())

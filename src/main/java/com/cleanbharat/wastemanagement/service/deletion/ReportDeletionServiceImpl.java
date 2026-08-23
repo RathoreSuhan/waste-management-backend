@@ -12,6 +12,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Deletes a garbage report and every resource owned by it.
+ *
+ * The cleanup hanging off the report goes first, and the report photo is
+ * released only after the database has accepted the deletion.
  */
 @Service
 @RequiredArgsConstructor
@@ -41,14 +44,20 @@ public class ReportDeletionServiceImpl implements ReportDeletionService {
 
         /*
          * Step 1
-         * Delete report image.
+         * Note down the report photo before the row is gone.
+         *
+         * The file itself is released in the last step, so a deletion the
+         * database refuses cannot leave the report standing without its photo.
          */
-        deleteReportImage(report);
+        String reportImageUrl = report.getImageUrl();
 
 
         /*
          * Step 2
          * Delete cleanup assignment.
+         *
+         * This clears the proposals, the work diary, the municipal decisions
+         * and every photo attached to them.
          */
         cleanupAssignmentRepository.findByReport(report)
                 .ifPresent(assignmentDeletionService::deleteAssignment);
@@ -77,15 +86,24 @@ public class ReportDeletionServiceImpl implements ReportDeletionService {
          * Delete report.
          */
         garbageReportRepository.delete(report);
+
+        // Send the deletion to the database before any file is touched
+        garbageReportRepository.flush();
+
+
+        /*
+         * Step 6
+         * Release the report photo noted in step 1.
+         */
+        deleteReportImage(reportImageUrl);
     }
 
     /**
      * Deletes report image from Cloudinary.
      */
-    private void deleteReportImage(GarbageReport report) {
+    private void deleteReportImage(String imageUrl) {
 
-        String imageUrl = report.getImageUrl();
-
+        // Nothing to release for a report filed without a photo
         if (imageUrl == null || imageUrl.isBlank()) {
             return;
         }
