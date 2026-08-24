@@ -257,6 +257,20 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
             // re-submits proof (GPS + AI run again) for a fresh municipal review.
             assignment.setStatus(AssignmentStatus.REWORK_REQUIRED);
             assignment.setCompletedAt(null); // not finished after all
+
+            /*
+             * The AI verdict belonged to the photograph this office has just
+             * turned down, so it is retired with it. Left standing, it counted
+             * as a verified cleanup in the admin totals and showed the cleaner a
+             * green "Verified by AI" banner beside the rework instruction. The
+             * cleaner's next upload records a fresh verdict.
+             *
+             * The remark is kept: it describes what the AI saw in the rejected
+             * image, which is exactly the note the rework card shows the cleaner.
+             */
+            assignment.setAiVerified(false);
+            assignment.setAiConfidence(null);
+
             assignmentRepository.save(assignment);
         }
 

@@ -96,9 +96,16 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
 
         CleanupProposal proposal;
 
+        String supersededImageUrl = null; // photograph the revived row was carrying, if any
+
         if (existing != null) {
             // Re-proposing after a withdrawal: same row, freshly captured visit and plan
             existing.setSubmittedAt(LocalDateTime.now()); // ranks as a new bid in the officer's queue
+
+            if (inspectionImageUrl != null) {
+                supersededImageUrl = existing.getInspectionImageUrl();
+            }
+
             // A re-proposal is a brand new visit, so it always carries a freshly captured fix
             proposal = applyPlanDetails(existing, request, inspectionImageUrl, distanceMeters, true);
         } else {
@@ -135,6 +142,8 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
             assignmentRepository.save(assignment);
         }
 
+        releaseSupersededImage(supersededImageUrl, inspectionImageUrl); // the revived row's old photograph
+
         return mapToResponse(saved);
     }
 
@@ -169,6 +178,9 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
 
         String newImageUrl = uploadInspectionImage(request.getInspectionImage());
 
+        // Held until the row and the revision ledger entry are both written
+        String supersededImageUrl = newImageUrl != null ? proposal.getInspectionImageUrl() : null;
+
         // Same overwrite a revived proposal gets, so the two paths cannot drift apart
         applyPlanDetails(proposal, request, newImageUrl, distanceMeters, freshReading);
 
@@ -177,6 +189,8 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
         if (answeringRevisionRequest) {
             recordRevisionSubmitted(saved); // tells the municipal queue the answer has arrived
         }
+
+        releaseSupersededImage(supersededImageUrl, newImageUrl); // the photograph this edit replaced
 
         return mapToResponse(saved);
     }
@@ -297,6 +311,24 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
     }
 
     /*
+     * Releases an inspection photograph that a new upload has replaced.
+     *
+     * Called only after the row carrying the replacement has been saved: an
+     * earlier delete meant that anything failing later in the transaction (the
+     * revision ledger write, a constraint) rolled the row back to a URL whose
+     * Cloudinary file had already been destroyed.
+     */
+    private void releaseSupersededImage(String supersededImageUrl, String replacementImageUrl) {
+
+        if (supersededImageUrl == null
+                || supersededImageUrl.isBlank()
+                || supersededImageUrl.equals(replacementImageUrl)) { // never destroy the image just stored
+            return;
+        }
+        cloudinaryService.deleteFile(supersededImageUrl); // avoid orphan uploads
+    }
+
+    /*
      * Writes a freshly captured inspection and cleaning plan onto an existing row.
      *
      * Two paths mean the same thing to an officer - a revision of a live
@@ -313,11 +345,8 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
                                              boolean freshReading) {
 
         if (newImageUrl != null) {
-            String oldImageUrl = proposal.getInspectionImageUrl();
             proposal.setInspectionImageUrl(newImageUrl);
-            if (oldImageUrl != null) {
-                cloudinaryService.deleteFile(oldImageUrl); // avoid orphan uploads
-            }
+            // The replaced photograph is released by the caller, once this row is stored
         }
 
         if (freshReading) { // only a re-captured position may move the recorded visit

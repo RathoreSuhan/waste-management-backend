@@ -18,6 +18,7 @@ import com.cleanbharat.wastemanagement.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -37,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -216,6 +218,51 @@ class CleanupActivityLogServiceTest {
         verify(activityLogRepository, never()).save(any(CleanupActivityLog.class));
     }
 
+    @Test
+    void entriesAreAcceptedAgainWhileTheCleanupIsBeingRedone() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        // Municipality sent the job back, so the cleaner is working again
+        CleanupAssignment assignment = assignment(AssignmentStatus.REWORK_REQUIRED, cleaner);
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(activityLogRepository.save(any(CleanupActivityLog.class))).thenAnswer(call -> call.getArgument(0));
+
+        CleanupActivityLogResponse response = cleanupActivityLogService.addActivityLog(
+                ASSIGNMENT_ID, request("Cleared the drain mouth the officer flagged", null, null), null);
+
+        // Without this the cleaner could not document what they redid before resubmitting
+        assertEquals("Cleared the drain mouth the officer flagged", response.getDescription());
+        verify(activityLogRepository).save(any(CleanupActivityLog.class));
+    }
+
+    @Test
+    void anEntryLoggedAwayFromTheSiteIsRecordedRatherThanRefused() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.IN_PROGRESS, cleaner);
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(activityLogRepository.save(any(CleanupActivityLog.class))).thenAnswer(call -> call.getArgument(0));
+
+        CleanupActivityLogResponse response = cleanupActivityLogService.addActivityLog(
+                ASSIGNMENT_ID,
+                request("Wrote this up at the depot after the shift",
+                        SITE_LATITUDE + 0.01, SITE_LONGITUDE), // roughly 1.1 km away
+                null);
+
+        /*
+         * The 50 m rule guards starting work and submitting proof, not the diary.
+         * A cleaner typing up the day's notes off site must not be blocked, so the
+         * distance is stored for the record instead of rejected.
+         */
+        assertNotNull(response.getDistanceMeters());
+        assertTrue(response.getDistanceMeters() > 50.0);
+        verify(activityLogRepository).save(any(CleanupActivityLog.class));
+    }
+
     // ---------------------------------------------------------------------
     // READING AND DELETING
     // ---------------------------------------------------------------------
@@ -251,8 +298,49 @@ class CleanupActivityLogServiceTest {
 
         cleanupActivityLogService.deleteActivityLog(ACTIVITY_LOG_ID);
 
-        verify(cloudinaryService).deleteFile("https://cloudinary.test/wrong-photo.jpg"); // no orphan assets
+        /*
+         * Order is the point: the file is released only once the row is gone.
+         * Destroying it first meant a rollback anywhere later in the transaction
+         * left the diary entry standing with a thumbnail that could never load.
+         */
+        InOrder ordered = inOrder(activityLogRepository, cloudinaryService);
+        ordered.verify(activityLogRepository).delete(entry);
+        ordered.verify(cloudinaryService).deleteFile("https://cloudinary.test/wrong-photo.jpg"); // no orphan assets
+    }
+
+    @Test
+    void deletingATextOnlyEntryNeverCallsCloudinary() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.IN_PROGRESS, cleaner);
+        CleanupActivityLog entry = activityLog(assignment, cleaner, "Typed the wrong date"); // no photo
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(activityLogRepository.findByIdAndCleaner(ACTIVITY_LOG_ID, cleaner)).thenReturn(Optional.of(entry));
+
+        cleanupActivityLogService.deleteActivityLog(ACTIVITY_LOG_ID);
+
         verify(activityLogRepository).delete(entry);
+        verifyNoInteractions(cloudinaryService); // a null URL is normal, not something to send anywhere
+    }
+
+    @Test
+    void anEntryCannotBeDeletedOnceProofIsUnderMunicipalReview() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        // Proof submitted: the officer is reading this diary, so it must not change underneath them
+        CleanupAssignment assignment = assignment(AssignmentStatus.AWAITING_APPROVAL, cleaner);
+        CleanupActivityLog entry = activityLog(assignment, cleaner, "Day one sweep");
+        entry.setImageUrl("https://cloudinary.test/day-one.jpg");
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(activityLogRepository.findByIdAndCleaner(ACTIVITY_LOG_ID, cleaner)).thenReturn(Optional.of(entry));
+
+        assertThrows(InvalidAssignmentStateException.class,
+                () -> cleanupActivityLogService.deleteActivityLog(ACTIVITY_LOG_ID));
+
+        verify(activityLogRepository, never()).delete(any(CleanupActivityLog.class));
+        verifyNoInteractions(cloudinaryService); // the officer's evidence stays exactly as submitted
     }
 
     @Test

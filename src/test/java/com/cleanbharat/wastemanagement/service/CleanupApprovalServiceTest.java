@@ -280,6 +280,117 @@ class CleanupApprovalServiceTest {
     }
 
     @Test
+    void rejectingCompletionRetiresTheAiVerdictThatBelongedToTheRefusedPhotograph() {
+        MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
+        CleanupAssignment assignment = assignment(corporation, AssignmentStatus.AWAITING_APPROVAL,
+                cleaner(5L, "cleaner.one@example.com"));
+
+        // The verdict the AI recorded for the image the office is about to turn down
+        assignment.setAiVerified(true);
+        assignment.setAiConfidence(0.93);
+        assignment.setAiRemarks("Footpath appears clear in the after image.");
+
+        signInAsCorporation(corporation);
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.save(any(CleanupApproval.class))).thenAnswer(call -> call.getArgument(0));
+
+        cleanupApprovalService.decideCompletion(
+                ASSIGNMENT_ID, request(ApprovalDecision.REJECTED, "Waste still behind the wall"));
+
+        /*
+         * Left standing, this verdict counted the cleanup in the admin's
+         * "verified cleanups" total and put a green "Verified by AI" banner on
+         * the cleaner's task card right above the rework instruction.
+         */
+        assertEquals(false, assignment.getAiVerified());
+        assertNull(assignment.getAiConfidence());
+
+        // The note is kept on purpose: the rework card shows it as "Last AI note"
+        assertEquals("Footpath appears clear in the after image.", assignment.getAiRemarks());
+        verify(assignmentRepository).save(assignment);
+    }
+
+    @Test
+    void requestingReworkOnCompletionAlsoRetiresTheAiVerdict() {
+        MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
+        CleanupAssignment assignment = assignment(corporation, AssignmentStatus.AWAITING_APPROVAL,
+                cleaner(5L, "cleaner.one@example.com"));
+        assignment.setAiVerified(true);
+        assignment.setAiConfidence(0.88);
+
+        signInAsCorporation(corporation);
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.save(any(CleanupApproval.class))).thenAnswer(call -> call.getArgument(0));
+
+        // REVISION_REQUIRED at the completion stage is the "request rework" button
+        cleanupApprovalService.decideCompletion(
+                ASSIGNMENT_ID, request(ApprovalDecision.REVISION_REQUIRED, "Sweep the drain mouth too"));
+
+        assertEquals(AssignmentStatus.REWORK_REQUIRED, assignment.getStatus());
+        assertEquals(false, assignment.getAiVerified()); // the next upload records a fresh verdict
+        assertNull(assignment.getAiConfidence());
+        verifyNoInteractions(rewardService);
+    }
+
+    @Test
+    void approvingCompletionLeavesTheAiVerdictOnRecord() {
+        MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
+        CleanupAssignment assignment = assignment(corporation, AssignmentStatus.AWAITING_APPROVAL,
+                cleaner(5L, "cleaner.one@example.com"));
+        assignment.setAiVerified(true);
+        assignment.setAiConfidence(0.93);
+
+        signInAsCorporation(corporation);
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.save(any(CleanupApproval.class))).thenAnswer(call -> call.getArgument(0));
+
+        cleanupApprovalService.decideCompletion(ASSIGNMENT_ID, request(ApprovalDecision.APPROVED, "Site verified"));
+
+        // The verdict describes the photograph that was accepted, so it stands as history
+        assertEquals(true, assignment.getAiVerified());
+        assertEquals(0.93, assignment.getAiConfidence());
+    }
+
+    @Test
+    void aCleanupSentBackForReworkCannotBeDecidedAgainUntilFreshProofArrives() {
+        MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
+        CleanupAssignment assignment = assignment(corporation, AssignmentStatus.REWORK_REQUIRED,
+                cleaner(5L, "cleaner.one@example.com"));
+
+        signInAsCorporation(corporation);
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        /*
+         * Guards against a double decision on a stale queue card: the officer's
+         * list is client-side, so a second click after the rework request must
+         * not release a reward against evidence that has not been re-uploaded.
+         */
+        assertThrows(InvalidAssignmentStateException.class, () -> cleanupApprovalService.decideCompletion(
+                ASSIGNMENT_ID, request(ApprovalDecision.APPROVED, "Changed my mind")));
+
+        assertEquals(AssignmentStatus.REWORK_REQUIRED, assignment.getStatus());
+        verifyNoInteractions(rewardService);
+        verifyNoInteractions(publicFeedAnalyticsService);
+    }
+
+    @Test
+    void anAlreadyCompletedCleanupCannotBeRewardedTwice() {
+        MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
+        CleanupAssignment assignment = assignment(corporation, AssignmentStatus.COMPLETED,
+                cleaner(5L, "cleaner.one@example.com"));
+
+        signInAsCorporation(corporation);
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        // "A cleanup must be rewarded exactly once" - the status gate is what enforces it
+        assertThrows(InvalidAssignmentStateException.class, () -> cleanupApprovalService.decideCompletion(
+                ASSIGNMENT_ID, request(ApprovalDecision.APPROVED, "Signing off again")));
+
+        verifyNoInteractions(rewardService);
+        verifyNoInteractions(publicFeedAnalyticsService);
+    }
+
+    @Test
     void completionCannotBeDecidedBeforeProofIsSubmitted() {
         MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
         CleanupAssignment assignment = assignment(corporation, AssignmentStatus.IN_PROGRESS,

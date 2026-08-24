@@ -251,8 +251,9 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
          * AI successfully verifies the cleanup.
          *
          * The rejected image is remembered here and removed only AFTER the
-         * replacement upload succeeds, so a failed upload can never leave
-         * the assignment with no image at all.
+         * replacement has been recorded on the assignment, so neither a failed
+         * upload nor a failed verification can leave the assignment pointing at
+         * an image that is already gone.
          */
         String previousCleanupImageUrl = assignment.getCleanupImageUrl(); // Image being replaced (null on first upload)
 
@@ -261,18 +262,6 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
         // Save uploaded image URL
         assignment.setCleanupImageUrl(cleanupImageUrl);
-
-        /*
-         * The replacement is now stored on the assignment, so the rejected
-         * image is referenced by nothing and must be destroyed in Cloudinary
-         * to avoid leaving unused files behind.
-         */
-        if (previousCleanupImageUrl != null
-                && !previousCleanupImageUrl.isBlank()
-                && !previousCleanupImageUrl.equals(cleanupImageUrl)) { // Never destroy the image just uploaded
-
-            cloudinaryService.deleteFile(previousCleanupImageUrl);
-        }
 
         /*
          * Validate BEFORE image
@@ -342,6 +331,23 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         }
 
         assignmentRepository.save(assignment);
+
+        /*
+         * The rejected image is released only here, once the replacement has
+         * been written to the assignment row.
+         *
+         * Order matters. Destroying it any earlier - before the AI call in
+         * particular - meant that a verification failure rolled this
+         * transaction back to a row still pointing at an image that no longer
+         * existed in Cloudinary, leaving the cleanup with a permanently broken
+         * "after" photograph.
+         */
+        if (previousCleanupImageUrl != null
+                && !previousCleanupImageUrl.isBlank()
+                && !previousCleanupImageUrl.equals(cleanupImageUrl)) { // Never destroy the image just uploaded
+
+            cloudinaryService.deleteFile(previousCleanupImageUrl);
+        }
 
         return CleanupValidationResponse.builder()
                 .aiVerified(assignment.getAiVerified()) // AI verification result

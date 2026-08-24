@@ -407,6 +407,176 @@ class CleanupAssignmentServiceTest {
         assertEquals(AFTER_IMAGE_URL, assignment.getCleanupImageUrl());
     }
 
+    @Test
+    void aReUploadThatReturnsTheSameCloudinaryUrlNeverDestroysTheStoredImage() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.IN_PROGRESS, cleaner);
+        assignment.setCleanupImageUrl(AFTER_IMAGE_URL); // Cloudinary overwrote the same public id
+        MultipartFile proof = proofImage();
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(cloudinaryService.uploadFile(proof)).thenReturn(AFTER_IMAGE_URL);
+        when(aiCleanupVerificationService.validateImages(BEFORE_IMAGE_URL, AFTER_IMAGE_URL))
+                .thenReturn(aiVerdict(true, true, 0.92));
+
+        cleanupAssignmentService.uploadCleanupImage(ASSIGNMENT_ID, proof, SITE_LATITUDE, SITE_LONGITUDE);
+
+        // Deleting here would destroy the replacement itself and leave a dead URL on the row
+        verify(cloudinaryService, never()).deleteFile(AFTER_IMAGE_URL);
+        assertEquals(AFTER_IMAGE_URL, assignment.getCleanupImageUrl());
+    }
+
+    // ---------------------------------------------------------------------
+    // CLEANUP PROOF: AI VERIFICATION FAILS OUTRIGHT
+    //
+    // A rejected verdict and an unavailable verifier are different events. A
+    // verdict is recorded; an outage rolls the whole upload back, so whatever
+    // was written to Cloudinary in the meantime has to be accounted for.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void anAiOutageReleasesTheImageThatWasJustUploaded() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.IN_PROGRESS, cleaner);
+        MultipartFile proof = proofImage();
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(cloudinaryService.uploadFile(proof)).thenReturn(AFTER_IMAGE_URL);
+        when(aiCleanupVerificationService.validateImages(BEFORE_IMAGE_URL, AFTER_IMAGE_URL))
+                .thenThrow(new RuntimeException("Gemini did not respond"));
+
+        assertThrows(RuntimeException.class, () -> cleanupAssignmentService.uploadCleanupImage(
+                ASSIGNMENT_ID, proof, SITE_LATITUDE, SITE_LONGITUDE));
+
+        // The transaction rolls back, so nothing would ever reference this upload again
+        verify(cloudinaryService).deleteFile(AFTER_IMAGE_URL);
+        verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
+    }
+
+    @Test
+    void anAiOutageOnAReUploadLeavesTheImageAlreadyOnRecordUntouched() {
+        String imageOnRecord = "https://cloudinary.test/first-attempt.jpg";
+
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        // Municipality asked for rework, so the first attempt is still the row's only image
+        CleanupAssignment assignment = assignment(AssignmentStatus.REWORK_REQUIRED, cleaner);
+        assignment.setCleanupImageUrl(imageOnRecord);
+        MultipartFile proof = proofImage();
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(cloudinaryService.uploadFile(proof)).thenReturn(AFTER_IMAGE_URL);
+        when(aiCleanupVerificationService.validateImages(BEFORE_IMAGE_URL, AFTER_IMAGE_URL))
+                .thenThrow(new RuntimeException("Gemini did not respond"));
+
+        assertThrows(RuntimeException.class, () -> cleanupAssignmentService.uploadCleanupImage(
+                ASSIGNMENT_ID, proof, SITE_LATITUDE, SITE_LONGITUDE));
+
+        /*
+         * The rollback restores imageOnRecord in the database, so destroying it
+         * here would leave the cleanup with an "after" photograph that can never
+         * load again - for the cleaner, the officer and the public feed alike.
+         */
+        verify(cloudinaryService, never()).deleteFile(imageOnRecord);
+        verify(cloudinaryService).deleteFile(AFTER_IMAGE_URL); // only the unreferenced upload goes
+    }
+
+    // ---------------------------------------------------------------------
+    // CLEANUP PROOF: THE 85% CONFIDENCE FLOOR
+    // ---------------------------------------------------------------------
+
+    @Test
+    void proofIsAcceptedExactlyAtTheConfidenceFloor() {
+        CleanupValidationResponse response = uploadWithVerdict(aiVerdict(true, true, 0.85));
+
+        assertTrue(response.getAiVerified()); // the floor is inclusive
+    }
+
+    @Test
+    void proofJustUnderTheConfidenceFloorIsRejected() {
+        CleanupValidationResponse response = uploadWithVerdict(aiVerdict(true, true, 0.84));
+
+        assertFalse(response.getAiVerified());
+        assertEquals(AssignmentStatus.IN_PROGRESS.name(), response.getAssignmentStatus()); // upload again
+    }
+
+    @Test
+    void proofWithoutAConfidenceFigureIsRejected() {
+        // A verdict that omits the figure must never be read as "confident enough"
+        AICleanupVerificationResponse noConfidence = AICleanupVerificationResponse.builder()
+                .sameLocation(true)
+                .garbageRemoved(true)
+                .confidence(null)
+                .remarks("Model returned no confidence value")
+                .build();
+
+        CleanupValidationResponse response = uploadWithVerdict(noConfidence);
+
+        assertFalse(response.getAiVerified());
+        assertEquals(AssignmentStatus.IN_PROGRESS.name(), response.getAssignmentStatus());
+    }
+
+    @Test
+    void proofCannotBeUploadedOnASiteThatWasNeverAwarded() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment unawarded = assignment(AssignmentStatus.IN_PROGRESS, null); // no cleaner on the row
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(unawarded));
+
+        assertThrows(UnauthorizedAssignmentAccessException.class, () -> cleanupAssignmentService.uploadCleanupImage(
+                ASSIGNMENT_ID, proofImage(), SITE_LATITUDE, SITE_LONGITUDE));
+
+        verifyNoInteractions(cloudinaryService, aiCleanupVerificationService);
+    }
+
+    // ---------------------------------------------------------------------
+    // LEGACY ROWS AND REPORTS WITHOUT COORDINATES
+    // ---------------------------------------------------------------------
+
+    @Test
+    void aLegacyClaimedAssignmentCanBeStartedWithoutAProposalApproval() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        // CLAIMED rows predate the approval workflow, so no PROPOSAL decision exists for them
+        CleanupAssignment assignment = assignment(AssignmentStatus.CLAIMED, cleaner);
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        cleanupAssignmentService.startCleanup(ASSIGNMENT_ID, SITE_LATITUDE, SITE_LONGITUDE);
+
+        assertEquals(AssignmentStatus.IN_PROGRESS, assignment.getStatus());
+        verifyNoInteractions(approvalRepository); // the check is skipped rather than failed
+    }
+
+    @Test
+    void startingWorkOnAReportWithoutCoordinatesRecordsNoDistance() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.ASSIGNED, cleaner);
+        assignment.getReport().setLatitude(null);  // filed before coordinate capture existed
+        assignment.getReport().setLongitude(null);
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.existsByAssignmentAndStageAndDecision(
+                assignment, ApprovalStage.PROPOSAL, ApprovalDecision.APPROVED)).thenReturn(true);
+
+        cleanupAssignmentService.startCleanup(ASSIGNMENT_ID, SITE_LATITUDE, SITE_LONGITUDE);
+
+        // Nothing to measure against, so the work still starts but no distance is claimed
+        assertEquals(AssignmentStatus.IN_PROGRESS, assignment.getStatus());
+        assertNull(assignment.getStartDistanceMeters());
+        assertEquals(SITE_LATITUDE, assignment.getStartLatitude()); // where the cleaner stood is still recorded
+    }
+
     // ---------------------------------------------------------------------
     // CLEANER DASHBOARD LISTS
     // ---------------------------------------------------------------------
@@ -426,6 +596,24 @@ class CleanupAssignmentServiceTest {
         assertEquals(ASSIGNMENT_ID, tasks.get(0).getAssignmentId());
         assertEquals("Cleaner 5", tasks.get(0).getCleanerName());
         assertEquals("Brihanmumbai Municipal Corporation", tasks.get(0).getMunicipalCorporation());
+    }
+
+    @Test
+    void reworkCountsAsLiveWorkOnTheCleanersDashboard() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment reworkSite = assignment(AssignmentStatus.REWORK_REQUIRED, cleaner);
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        // A first attempt and a municipal re-do are both work still on the cleaner's hands
+        when(assignmentRepository.findByCleanerAndStatusIn(cleaner,
+                List.of(AssignmentStatus.IN_PROGRESS, AssignmentStatus.REWORK_REQUIRED)))
+                .thenReturn(List.of(reworkSite));
+
+        List<CleanupAssignmentResponse> live = cleanupAssignmentService.getInProgressAssignments();
+
+        assertEquals(1, live.size());
+        assertEquals(AssignmentStatus.REWORK_REQUIRED.name(), live.get(0).getAssignmentStatus());
     }
 
     @Test
@@ -517,5 +705,26 @@ class CleanupAssignmentServiceTest {
                 .confidence(confidence)
                 .remarks("Automated comparison of the before and after photographs")
                 .build();
+    }
+
+    /*
+     * One proof upload by the awarded cleaner, standing on the reported spot,
+     * from an assignment that is IN_PROGRESS - so a test about the verdict alone
+     * does not have to repeat the whole happy-path wiring.
+     */
+    private CleanupValidationResponse uploadWithVerdict(AICleanupVerificationResponse verdict) {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.IN_PROGRESS, cleaner);
+        MultipartFile proof = proofImage();
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(cloudinaryService.uploadFile(proof)).thenReturn(AFTER_IMAGE_URL);
+        when(aiCleanupVerificationService.validateImages(BEFORE_IMAGE_URL, AFTER_IMAGE_URL))
+                .thenReturn(verdict);
+
+        return cleanupAssignmentService.uploadCleanupImage(
+                ASSIGNMENT_ID, proof, SITE_LATITUDE, SITE_LONGITUDE);
     }
 }

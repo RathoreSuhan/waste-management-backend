@@ -98,12 +98,21 @@ public class CleanupActivityLogServiceImpl implements CleanupActivityLogService 
 
         validateWorkInProgress(activityLog.getAssignment()); // history freezes once proof is submitted
 
-        // Free the Cloudinary asset first; the row is worthless without it anyway
-        if (activityLog.getImageUrl() != null) {
-            cloudinaryService.deleteFile(activityLog.getImageUrl());
-        }
+        String imageUrl = activityLog.getImageUrl(); // remembered before the row goes
 
         activityLogRepository.delete(activityLog);
+
+        /*
+         * The photograph is released only after the row has been deleted.
+         *
+         * Deleting it first meant that anything failing afterwards - the delete
+         * itself, or a rollback further up this transaction - left the entry on
+         * the cleaner's diary pointing at a Cloudinary asset that no longer
+         * existed, so the thumbnail could never load again.
+         */
+        if (imageUrl != null) {
+            cloudinaryService.deleteFile(imageUrl);
+        }
     }
 
     // ---------------------------------------------------------------- helpers
