@@ -105,6 +105,27 @@ public interface CleanupAssignmentRepository extends JpaRepository<CleanupAssign
             List<AssignmentStatus> statuses
     );
 
+    /**
+     * Municipal history desk: this corporation's signed-off cleanups, most
+     * recently approved first.
+     *
+     * Ordered on completedAt rather than id, because this list is a record of
+     * decisions - a long-standing report approved today belongs above a newer
+     * one approved last week, which an id ordering would get backwards.
+     * NULLS LAST with an id tie-break keeps a legacy COMPLETED row carrying no
+     * completion timestamp at the foot of the list rather than the head of it.
+     */
+    @Query("""
+        SELECT a
+        FROM CleanupAssignment a
+        WHERE a.assignedMunicipalCorporation = :municipalCorporation
+          AND a.status = com.cleanbharat.wastemanagement.enums.AssignmentStatus.COMPLETED
+        ORDER BY a.completedAt DESC NULLS LAST, a.id DESC
+        """)
+    List<CleanupAssignment> findCompletedByMunicipalCorporationNewestFirst(
+            @Param("municipalCorporation") MunicipalCorporation municipalCorporation
+    );
+
     // A cleaner's live work now spans IN_PROGRESS and REWORK_REQUIRED
     List<CleanupAssignment> findByCleanerAndStatusIn(User cleaner, List<AssignmentStatus> statuses);
 

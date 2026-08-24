@@ -329,6 +329,25 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * The corporation's own completion history.
+     *
+     * Scoped exactly like every other read on this desk: the corporation comes
+     * from the authenticated officer, so one city can never list another city's
+     * signed-off work. The repository does the ordering, newest approval first.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<CleanupAssignmentResponse> getCompletedCleanups() {
+        MunicipalCorporation corporation = getLoggedInCorporation();
+
+        return assignmentRepository
+                .findCompletedByMunicipalCorporationNewestFirst(corporation)
+                .stream()
+                .map(this::mapAssignment)
+                .collect(Collectors.toList());
+    }
+
     @Override
     @Transactional(readOnly = true)
     public CleanupAssignmentResponse getAssignmentForReview(Long assignmentId) {

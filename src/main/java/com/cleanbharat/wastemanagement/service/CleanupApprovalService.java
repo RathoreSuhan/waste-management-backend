@@ -40,6 +40,9 @@ public interface CleanupApprovalService {
     // Awarded work currently being executed (assigned, in progress or sent back for rework)
     List<CleanupAssignmentResponse> getActiveCleanups();
 
+    // Cleanups this corporation has already signed off, most recently approved first
+    List<CleanupAssignmentResponse> getCompletedCleanups();
+
     // One assignment in full detail, for the review screens
     CleanupAssignmentResponse getAssignmentForReview(Long assignmentId);
 

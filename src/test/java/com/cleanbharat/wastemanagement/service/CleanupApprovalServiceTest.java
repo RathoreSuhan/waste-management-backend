@@ -33,6 +33,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -311,6 +312,66 @@ class CleanupApprovalServiceTest {
         assertEquals(AssignmentStatus.AWAITING_APPROVAL, assignment.getStatus()); // untouched
         verifyNoInteractions(rewardService);
         verifyNoInteractions(publicFeedAnalyticsService);
+    }
+
+    // ---------------------------------------------------------------------
+    // COMPLETION HISTORY (municipal history desk)
+    // ---------------------------------------------------------------------
+
+    @Test
+    void completionHistoryOnlyReturnsSignedOffCleanupsOfTheSignedInCorporation() {
+        MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
+        CleanupAssignment closed = assignment(corporation, AssignmentStatus.COMPLETED,
+                cleaner(5L, "cleaner.one@example.com"));
+
+        signInAsCorporation(corporation);
+        when(assignmentRepository.findCompletedByMunicipalCorporationNewestFirst(corporation))
+                .thenReturn(List.of(closed));
+
+        List<CleanupAssignmentResponse> history = cleanupApprovalService.getCompletedCleanups();
+
+        assertEquals(1, history.size());
+        assertEquals(ASSIGNMENT_ID, history.get(0).getAssignmentId());
+        assertEquals(AssignmentStatus.COMPLETED.name(), history.get(0).getAssignmentStatus());
+
+        // The corporation is resolved from the token, so the query can only ever
+        // be issued for the officer's own city
+        verify(assignmentRepository).findCompletedByMunicipalCorporationNewestFirst(corporation);
+    }
+
+    @Test
+    void completionHistoryPreservesTheNewestFirstOrderTheRepositoryReturns() {
+        MunicipalCorporation corporation = corporation(CORPORATION_ID, CORPORATION_CITY, CORPORATION_EMAIL);
+        User cleaner = cleaner(5L, "cleaner.one@example.com");
+
+        CleanupAssignment approvedToday = assignment(corporation, AssignmentStatus.COMPLETED, cleaner);
+        approvedToday.setCompletedAt(LocalDateTime.now());
+
+        CleanupAssignment approvedLastWeek = assignment(corporation, AssignmentStatus.COMPLETED, cleaner);
+        approvedLastWeek.setId(ASSIGNMENT_ID + 1);
+        approvedLastWeek.setCompletedAt(LocalDateTime.now().minusDays(7));
+
+        signInAsCorporation(corporation);
+        // Repository orders on completedAt DESC; the service must not resequence it
+        when(assignmentRepository.findCompletedByMunicipalCorporationNewestFirst(corporation))
+                .thenReturn(List.of(approvedToday, approvedLastWeek));
+
+        List<CleanupAssignmentResponse> history = cleanupApprovalService.getCompletedCleanups();
+
+        assertEquals(ASSIGNMENT_ID, history.get(0).getAssignmentId());     // latest sign-off at the top
+        assertEquals(ASSIGNMENT_ID + 1, history.get(1).getAssignmentId()); // oldest at the bottom
+    }
+
+    @Test
+    void accountThatIsNotARegisteredCorporationCannotOpenTheCompletionHistory() {
+        signInAs("cleaner.municipal@example.com");
+        when(municipalRepository.findByEmailIgnoreCase("cleaner.municipal@example.com"))
+                .thenReturn(Optional.empty());
+
+        assertThrows(UnauthorizedAssignmentAccessException.class,
+                () -> cleanupApprovalService.getCompletedCleanups());
+
+        verifyNoInteractions(assignmentRepository); // no city data is ever read for such an account
     }
 
     // ---------------------------------------------------------------------

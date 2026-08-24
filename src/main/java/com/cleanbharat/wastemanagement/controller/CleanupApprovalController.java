@@ -84,6 +84,12 @@ public class CleanupApprovalController {
         return ResponseEntity.ok(cleanupApprovalService.getActiveCleanups());
     }
 
+    // Cleanups this corporation has already approved, newest sign-off first
+    @GetMapping("/completed-cleanups")
+    public ResponseEntity<List<CleanupAssignmentResponse>> getCompletedCleanups() {
+        return ResponseEntity.ok(cleanupApprovalService.getCompletedCleanups());
+    }
+
     // One assignment in full detail for the review screens
     @GetMapping("/assignment/{assignmentId}")
     public ResponseEntity<CleanupAssignmentResponse> getAssignmentForReview(@PathVariable Long assignmentId) {
