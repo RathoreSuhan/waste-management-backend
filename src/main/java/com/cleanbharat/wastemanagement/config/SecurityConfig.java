@@ -112,6 +112,19 @@ public class SecurityConfig {
                                 "/api/files/**",          // View uploaded images
                                 "/api/public-feed/**",    // Public garbage reports feed
 
+                                /*
+                                  Wake-up ping, called before anyone signs in.
+
+                                  The free host stops the container when it is
+                                  idle, so the frontend calls this as the site
+                                  opens to start the container early. It cannot
+                                  require a token: the visitor has none yet, and
+                                  the whole point is to be reached first.
+
+                                  It discloses nothing - see HealthController.
+                                */
+                                "/api/health",
+
                                 "/api/leaderboard",       // National leaderboard
                                 "/api/leaderboard/state/**", // State leaderboard
                                 "/api/leaderboard/city/**"   // City leaderboard

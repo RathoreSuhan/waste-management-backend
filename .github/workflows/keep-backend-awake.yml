@@ -1,0 +1,68 @@
+name: Keep backend awake
+
+# ============================================================================
+# Why this workflow exists
+# ============================================================================
+#
+# The service runs on a free plan that stops the container after roughly
+# fifteen minutes without traffic. Starting it again takes close to a minute,
+# and that wait lands on whichever visitor happens to arrive first.
+#
+# A short ping every fourteen minutes keeps the container running, so in normal
+# use nobody meets a cold start at all.
+#
+# Active hours only, on purpose. The free plan includes 750 instance-hours a
+# month; pinging around the clock would consume about 730 of them and leave no
+# headroom for anything else on the account. The window below is roughly
+# 05:30 to 00:30 IST, so the service is allowed to sleep overnight, when there
+# is no one to inconvenience.
+#
+# Best effort, not a guarantee: GitHub delays scheduled runs when its own
+# queues are busy. The frontend still warms the backend on load and still
+# explains the wait, so a missed run degrades rather than breaks.
+#
+# One-time setup
+# --------------
+# Add a repository *variable* (not a secret) under
+# Settings -> Secrets and variables -> Actions -> Variables:
+#
+#   BACKEND_URL = https://<your-service>.onrender.com     (no trailing slash)
+#
+# It is a public URL rather than a credential, which is why it is a variable.
+# Until it is set the job skips itself instead of failing every fourteen
+# minutes.
+# ============================================================================
+
+on:
+  schedule:
+    # Every 14 minutes, 00:00-18:59 UTC (~05:30-00:30 IST)
+    - cron: "*/14 0-18 * * *"
+
+  # Lets the service be woken by hand from the Actions tab
+  workflow_dispatch:
+
+# Read-only: this workflow only makes an outbound request
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+
+    # No URL configured yet - skip quietly rather than fail on every run
+    if: vars.BACKEND_URL != ''
+
+    steps:
+      - name: Ping health endpoint
+        run: |
+          # -m 120: the first call of the day IS the cold start, so it has to
+          # be allowed to wait for the container to finish starting.
+          # --retry-all-errors covers the 502 the host returns while starting.
+          curl -fsS \
+            -m 120 \
+            --retry 3 \
+            --retry-delay 10 \
+            --retry-all-errors \
+            "${BACKEND_URL}/api/health"
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_URL }}

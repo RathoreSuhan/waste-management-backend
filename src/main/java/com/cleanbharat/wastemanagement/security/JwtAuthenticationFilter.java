@@ -48,6 +48,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return path.startsWith("/api/auth/") ||     // Login & Register
                path.startsWith("/api/files/") ||    // File viewing
                path.startsWith("/api/leaderboard") ||
+               path.equals("/api/health") ||        // Wake-up ping, sent before sign-in
                path.equals("/actuator/health");     // Health check
     }
 
