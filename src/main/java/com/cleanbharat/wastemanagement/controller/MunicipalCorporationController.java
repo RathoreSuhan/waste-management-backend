@@ -3,6 +3,7 @@ package com.cleanbharat.wastemanagement.controller;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
 import com.cleanbharat.wastemanagement.service.MunicipalCorporationService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
@@ -16,7 +17,8 @@ public class MunicipalCorporationController {
 
     // Create Municipal Corporation
     @PostMapping
-    public MunicipalCorporationResponse createMunicipalCorporation(@RequestBody MunicipalCorporationRequest request) {
+    // @Valid runs the request limits; without it the DTO annotations never fire
+    public MunicipalCorporationResponse createMunicipalCorporation(@Valid @RequestBody MunicipalCorporationRequest request) {
         return municipalCorporationService.createMunicipalCorporation(request);
     }
 
@@ -42,7 +44,7 @@ public class MunicipalCorporationController {
     @PutMapping("/{id}")
     public MunicipalCorporationResponse updateMunicipalCorporation(
             @PathVariable Long id,
-            @RequestBody MunicipalCorporationRequest request) {
+            @Valid @RequestBody MunicipalCorporationRequest request) {
 
         return municipalCorporationService.updateMunicipalCorporation(id, request);
     }
