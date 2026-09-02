@@ -934,11 +934,30 @@ Enums that are **never** stored in the database (runtime / API only):
 
 ## Schema Maintenance
 
-Because `ddl-auto=update` never rewrites an existing CHECK constraint, PostgreSQL can keep an old
-`*_status_check` constraint after new enum values are introduced (for example the newer
-`AssignmentStatus` values). The one-time repair script
-`src/main/resources/db/fix-enum-check-constraints.sql` drops and recreates those stale constraints so
-the database accepts the current enum sets.
+`spring.jpa.hibernate.ddl-auto=update` only ever **adds** to a live schema. It creates tables, columns
+and indexes, but it never widens a column, never drops a `NOT NULL`, never removes an old `UNIQUE` rule
+and never rewrites a stale `CHECK` constraint. So a database created months ago can keep rejecting
+writes that today's entities consider perfectly valid.
+
+Four startup runners repair exactly those gaps. Each one is PostgreSQL-only, idempotent (a no-op on
+every later boot), logs a warning instead of failing startup, and has a hand-runnable SQL twin in
+`src/main/resources/db/` for repairing a database without deploying.
+
+| Runner | Repairs | Manual script | Switch off with |
+|--------|---------|---------------|-----------------|
+| `ColumnWidthInitializer` | Text columns narrower than the entity declares — `garbage_reports.description` → 500, `comments.message` → 1000. Widen-only, so no value can stop fitting | `db/widen-text-columns.sql` | `cleanbharat.db.widen-text-columns=false` |
+| `ColumnNullabilityInitializer` | `NOT NULL` left on a column the entity now allows to be null — `cleanup_approvals.decided_by`, since a corporation decides under its own account | `db/relax-optional-columns.sql` | `cleanbharat.db.relax-optional-columns=false` |
+| `StaleUniqueConstraintInitializer` | Old `UNIQUE` rules on append-only ledgers — `cleanup_approvals` collects one row per municipal decision | `db/drop-stale-unique-constraints.sql` | `cleanbharat.db.drop-stale-unique-constraints=false` |
+| `EnumCheckConstraintInitializer` | `*_check` constraints that predate newer enum values, most importantly `cleanup_assignments.status` | `db/fix-enum-check-constraints.sql` | `cleanbharat.db.repair-enum-constraints=false` |
+
+Why the column width one exists: `garbage_reports.description` was created as `varchar(255)` before
+`CreateReportRequest` allowed 500 characters, so a long description failed with SQLSTATE `22001` and the
+citizen was shown the duplicate-report wording for a report that was not a duplicate. Widening a
+`varchar` in PostgreSQL is a catalogue-only change — no table rewrite, no data touched. A column already
+changed to unbounded `text` is left alone rather than narrowed.
+
+`db/backfill-report-status-in-progress.sql` is a one-time data fix, not a schema repair, and has no
+runner — it is meant to be executed by hand.
 
 ---
 

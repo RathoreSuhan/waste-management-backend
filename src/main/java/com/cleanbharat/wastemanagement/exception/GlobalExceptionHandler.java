@@ -17,6 +17,8 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 
+import java.sql.SQLException;
+
 @RestControllerAdvice // global handler
 @Slf4j // Unexpected failures are recorded server side instead of being sent to the browser
 public class GlobalExceptionHandler {
@@ -335,12 +337,31 @@ public class GlobalExceptionHandler {
      *
      * The full detail is logged for the developer; the caller only gets a short
      * message telling them the save did not go through.
+     *
+     * SQLSTATE class 22 is answered separately. Those are *data* exceptions - a
+     * value too long for its column, a numeric overflow, a malformed literal -
+     * where nothing conflicts with anything: the value simply does not fit the
+     * column. Reporting them as 409 sent citizens the duplicate-report wording
+     * for a report that was not a duplicate, and hid the real cause, so they now
+     * answer 400. Class 23 (unique, foreign key, NOT NULL, CHECK) keeps the 409
+     * the duplicate-report path on the frontend keys on.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
 
         // Root cause carries the actual constraint name, useful while debugging
         log.error("Database rejected the write: {}", ex.getMostSpecificCause().getMessage(), ex);
+
+        if (isDataException(ex)) {
+
+            ErrorResponse error = new ErrorResponse(
+                    "Some of the text you entered is longer than this server can store. "
+                            + "Please shorten it and try again.",
+                    HttpStatus.BAD_REQUEST.value()
+            );
+
+            return new ResponseEntity<>(error, HttpStatus.BAD_REQUEST);
+        }
 
         ErrorResponse error = new ErrorResponse(
                 "This could not be saved because it conflicts with existing records. "
@@ -349,6 +370,23 @@ public class GlobalExceptionHandler {
         );
 
         return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    /**
+     * True when the driver reported an SQLSTATE class 22 (data exception), which
+     * means the submitted value did not fit its column rather than clashing with
+     * another row. Anything without an SQLSTATE is treated as a conflict, so the
+     * previous behaviour is unchanged for every other failure.
+     */
+    private boolean isDataException(DataIntegrityViolationException ex) {
+
+        if (ex.getMostSpecificCause() instanceof SQLException sqlException) {
+
+            String sqlState = sqlException.getSQLState();
+            return sqlState != null && sqlState.startsWith("22");
+        }
+
+        return false;
     }
 
     /**

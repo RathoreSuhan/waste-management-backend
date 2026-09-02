@@ -26,6 +26,9 @@ public class AIReportValidationServiceImpl implements AIReportValidationService 
     // Shared Gemini helper service
     private final GeminiSupportService geminiSupportService;
 
+    // Width of GarbageReport.garbageCategory, the column this free text is stored in
+    private static final int MAX_GARBAGE_CATEGORY_LENGTH = 100;
+
     // Minimum AI confidence configured in application.properties
     @Value("${report.ai.minimum-confidence}")
     private Double minimumConfidence;
@@ -366,6 +369,25 @@ public class AIReportValidationServiceImpl implements AIReportValidationService 
                         "AI response missing garbageCategory."
                 );
             }
+
+            /*
+             * The category is free text written by the model, and it is the only
+             * value on a report that no @Size governs. It is trimmed to the column
+             * width here, because a longer answer would otherwise fail the whole
+             * insert at save time - after the photograph had already been accepted
+             * and uploaded.
+             */
+            String garbageCategory = response.getGarbageCategory().trim();
+
+            if (garbageCategory.length() > MAX_GARBAGE_CATEGORY_LENGTH) {
+
+                log.warn("AI returned a {} character garbageCategory, keeping the first {}.",
+                        garbageCategory.length(), MAX_GARBAGE_CATEGORY_LENGTH);
+
+                garbageCategory = garbageCategory.substring(0, MAX_GARBAGE_CATEGORY_LENGTH);
+            }
+
+            response.setGarbageCategory(garbageCategory);
 
             if (response.getSeverity() == null) {
                 throw new InvalidReportImageException(

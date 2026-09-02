@@ -19,7 +19,8 @@ public class Comment {
     private Long id;
 
     // Comment or reply text
-    @Column(nullable = false)
+    // Width matches the 1000 character limit the comment box and the request DTOs allow
+    @Column(nullable = false, length = 1000)
     private String message;
 
     // User who wrote the comment

@@ -46,6 +46,8 @@ public class GarbageReport {
     @NotBlank
     private String title; // report title
 
+    // Width matches CreateReportRequest's @Size(max = 500), so a valid request always fits
+    @Column(length = 500)
     private String description; // garbage details
 
     @Column(nullable = false)
