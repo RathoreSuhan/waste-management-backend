@@ -4,6 +4,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -17,9 +18,30 @@ import io.jsonwebtoken.JwtException;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final CustomUserDetailsService userDetailsService;
+
+    /**
+     * The one answer given to any caller whose credentials are not accepted.
+     *
+     * Deliberately says nothing about how the request was authenticated. The
+     * earlier wording named the scheme outright ("JWT token has expired",
+     * "Invalid JWT token"), and the frontend shows a non-technical backend
+     * message to the reader verbatim, so that detail was printed on the page
+     * for anyone to see. What mechanism guards the API is not information a
+     * client needs in order to sign in again.
+     *
+     * It is also a single constant rather than one message per cause, so an
+     * expired token and a forged one are indistinguishable from outside.
+     * Two different sentences answered a useful question for whoever was
+     * probing - whether a token was correctly signed but merely stale, or
+     * rejected outright - and a legitimate visitor does the same thing in
+     * either case.
+     */
+    private static final String SESSION_ENDED_MESSAGE =
+            "Your session has ended. Please sign in again.";
 
     /**
      * Skip JWT validation for public endpoints.
@@ -151,10 +173,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
 
-            sendUnauthorizedResponse(
-                    response,
-                    "JWT token has expired. Please log in again."
-            );
+            // The cause is kept here, where only the operator can read it
+            logRejection(request, ex);
+
+            sendUnauthorizedResponse(response, SESSION_ENDED_MESSAGE);
         }
 
         // Invalid JWT (signature, malformed, etc.)
@@ -166,12 +188,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
 
-            sendUnauthorizedResponse(
-                    response,
-                    "Invalid JWT token."
-            );
+            logRejection(request, ex);
+
+            // Same answer as an expired token, on purpose - see the constant
+            sendUnauthorizedResponse(response, SESSION_ENDED_MESSAGE);
         }
 
+    }
+
+    /**
+     * Record why a token was refused, for the server log only.
+     *
+     * The exception type and the path are enough to tell a lapsed session
+     * from a tampered one while reading the logs. The token itself is never
+     * written: it is a live credential until it expires.
+     */
+    private void logRejection(HttpServletRequest request, JwtException ex) {
+        log.debug(
+                "Rejected request to {}: {}",
+                request.getRequestURI(),
+                ex.getClass().getSimpleName()
+        );
     }
 
     /**
