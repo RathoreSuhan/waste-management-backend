@@ -70,11 +70,17 @@ public class RewardServiceImpl implements RewardService {
      *   (e.g. admin bonus points), the cache MUST still evict.
      *   Defensive programming: each method that changes data
      *   is responsible for its own cache consistency.
+     *
+     * WHY EVICT THE ADMIN DASHBOARD:
+     *   Its "Leading Officer" tile is the top of the very leaderboard
+     *   these points reorder, so it goes stale for exactly the same
+     *   reason - and evicting it here keeps the two in step.
      * ============================================================
      */
     @Caching(evict = {
             @CacheEvict(value = "leaderboard_top", allEntries = true),
-            @CacheEvict(value = "homepage_impact_stats", allEntries = true)
+            @CacheEvict(value = "homepage_impact_stats", allEntries = true),
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     })
     @Override
     public void rewardCleaner(CleanupAssignment assignment) {

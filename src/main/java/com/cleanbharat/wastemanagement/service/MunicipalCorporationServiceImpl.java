@@ -8,6 +8,7 @@ import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -79,6 +80,16 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         return mapToResponse(municipalCorporation);
     }
 
+    /*
+     * The cached municipal overview carries this corporation's own
+     * organizationName and city in its header, so an edit here makes the
+     * entry wrong even though not one count changed.
+     *
+     * allEntries = true is required rather than merely tidy: line 98 can
+     * change the email, and the email IS the cache key. Evicting the new
+     * key would leave the old one behind holding the old name.
+     */
+    @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
     @Override
     public MunicipalCorporationResponse updateMunicipalCorporation(
             Long id,
@@ -104,6 +115,8 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         return mapToResponse(updatedMunicipalCorporation);
     }
 
+    // Removing a city body retires its cached overview along with it
+    @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
     @Override
     public void deleteMunicipalCorporation(Long id) {
 

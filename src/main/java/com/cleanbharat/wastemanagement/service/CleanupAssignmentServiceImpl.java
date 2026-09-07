@@ -22,6 +22,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import com.cleanbharat.wastemanagement.dto.ai.AICleanupVerificationResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -113,6 +115,17 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
      * who is awarded the work.
      */
 
+    /*
+     * Starting work moves BOTH overviews:
+     *   municipal - the site leaves "Pending Proposals" and joins "Active
+     *     Cleanups" (assignment -> IN_PROGRESS).
+     *   admin     - markReportInProgress() takes the report out of PENDING,
+     *     so the "Pending" tile falls.
+     */
+    @Caching(evict = {
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
+    })
     @Override
     public void startCleanup(Long assignmentId, Double latitude, Double longitude) { // start location evidence
 
@@ -186,6 +199,21 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         assignmentRepository.save(assignment);
     }
 
+    /*
+     * A successful upload records the AI verdict and, via
+     * resolveCleanupAssignment(), parks the job at AWAITING_APPROVAL:
+     *   admin     - the "AI Verified" tile rises.
+     *   municipal - the site leaves "Active Cleanups" for "Completion
+     *     Reviews", which is the officer's own work queue.
+     *
+     * Note the evictions are on the CLEANER's request, not the officer's, so
+     * they must flush all municipal entries rather than one keyed on the
+     * caller - the caller here is not the corporation whose counts moved.
+     */
+    @Caching(evict = {
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
+    })
     @Override
     public CleanupValidationResponse uploadCleanupImage(
             Long assignmentId,

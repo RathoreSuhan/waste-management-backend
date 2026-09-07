@@ -12,6 +12,7 @@ import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.repository.VoteRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,9 @@ public class VoteServiceImpl implements VoteService {
     private final UserRepository userRepository;
     private final AnalyticsService analyticsService;
 
+    // A first rating raises the admin "Urgency Ratings" tile. Changing an
+    // existing rating leaves the count alone, but the evict is harmless there
+    @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     @Override
     public VoteResponse submitVote(VoteRequest request) {
 

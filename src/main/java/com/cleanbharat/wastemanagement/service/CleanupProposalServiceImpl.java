@@ -19,6 +19,7 @@ import com.cleanbharat.wastemanagement.repository.CleanupProposalRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.util.GeoLocationUtil; // Haversine distance helper
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -56,6 +57,9 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
     private static final Set<ProposalStatus> EDITABLE_STATES =
             Set.of(ProposalStatus.SUBMITTED, ProposalStatus.REVISION_REQUIRED);
 
+    // First proposal on an open site moves it into the municipality's
+    // "Pending Proposals" queue (assignment PENDING -> PROPOSAL_SUBMITTED)
+    @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
     @Override
     public CleanupProposalResponse submitProposal(Long assignmentId, CreateProposalRequest request) {
 

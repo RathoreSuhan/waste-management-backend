@@ -18,6 +18,7 @@ import com.cleanbharat.wastemanagement.service.location.ReportDuplicateValidatio
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -69,9 +70,19 @@ public class ReportServiceImpl implements ReportService {
      *   Eviction = instant consistency.
      *   Best practice: use BOTH (eviction for correctness + TTL
      *   as a safety net for edge cases where eviction is missed).
+     *
+     * THE TWO DASHBOARD CACHES GO WITH IT:
+     *   A new report raises the admin "Total Reports" and "Pending"
+     *   tiles, and createDefaultAssignment() routes the site to a city
+     *   body, raising that corporation's "Relevant Reports". Both
+     *   overviews would otherwise keep showing the old figure.
      * ============================================================
      */
-    @CacheEvict(value = "homepage_impact_stats", allEntries = true)
+    @Caching(evict = {
+            @CacheEvict(value = "homepage_impact_stats", allEntries = true),
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
+    })
     @Transactional
     @Override
     public ReportResponse createReport(CreateReportRequest request, MultipartFile image) {

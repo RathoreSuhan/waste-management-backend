@@ -27,6 +27,8 @@ import com.cleanbharat.wastemanagement.service.deletion.UserDeletionService;
 
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -66,6 +68,33 @@ public class AdminServiceImpl implements AdminService {
     private final ReportDeletionService reportDeletionService;
 
 
+    /*
+     * @Cacheable — the admin overview is ten COUNT queries and a leaderboard read.
+     *
+     * WHY A SINGLE SHARED KEY IS SAFE HERE:
+     *   Nothing in this response depends on WHICH administrator is asking.
+     *   Every admin sees the same platform-wide totals, so one entry
+     *   ("admin_dashboard_stats::overview") serves all of them.
+     *   Contrast getDashboardStats() on the municipal desk, where a shared
+     *   key would leak one city's numbers to another.
+     *
+     * WHAT IT SAVES:
+     *   MISS: 10 aggregate COUNT queries against Neon + the leaderboard read.
+     *   HIT:  one Redis lookup, no database traffic at all.
+     *
+     * NESTING IS DELIBERATE:
+     *   getPublicLeaderboard() below is itself @Cacheable. On a HIT here it
+     *   is never called; on a MISS it usually answers from its own cache.
+     *   Both caches are evicted by the same event (rewardCleaner), so the
+     *   topCleaner stored here can never drift from the leaderboard page.
+     *
+     * FRESHNESS:
+     *   Every path that moves one of these numbers evicts this cache -
+     *   registration, user deletion, role promotion, report create/delete,
+     *   cleanup start, AI verification, municipal sign-off, comments and
+     *   urgency ratings. The 10 minute TTL is only a safety net.
+     */
+    @Cacheable(value = "admin_dashboard_stats", key = "'overview'")
     @Override
     public DashboardResponse getDashboard() {
 
@@ -308,6 +337,9 @@ public class AdminServiceImpl implements AdminService {
                 .build();
     }
 
+    // Role changes in place, so no deletion service is involved: this method
+    // is the only place the citizen/admin split moves, and must evict itself
+    @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     @Override
     @Transactional
     public SuccessResponse promoteCitizenToAdmin(Long userId) {

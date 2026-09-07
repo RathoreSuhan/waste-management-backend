@@ -5,6 +5,8 @@ import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.exception.UserDeletionNotAllowedException;
 import com.cleanbharat.wastemanagement.repository.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,6 +42,18 @@ public class UserDeletionServiceImpl implements UserDeletionService {
     private final CleanupActivityLogRepository cleanupActivityLogRepository;
 
 
+    /*
+     * A citizen takes their reports with them, so this reaches the report and
+     * assignment counts of both overviews as well as the user tiles.
+     *
+     * Left on the default beforeInvocation = false on purpose: the eviction
+     * runs only after the method returns normally, so a rolled-back deletion
+     * does not throw away a cache entry that is still correct.
+     */
+    @Caching(evict = {
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
+    })
     @Override
     public void deleteCitizen(User citizen) {
 
@@ -83,6 +97,9 @@ public class UserDeletionServiceImpl implements UserDeletionService {
 
     }
 
+    // Only cleaners holding no assignment can be removed, so the municipal
+    // counts cannot move here - but their comments and ratings go with them
+    @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     @Override
     public void deleteCleaner(User cleaner) {
 

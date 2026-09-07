@@ -14,6 +14,8 @@ import com.cleanbharat.wastemanagement.repository.VoteRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.service.CloudinaryService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -61,6 +63,25 @@ public class AssignmentDeletionServiceImpl implements AssignmentDeletionService 
     // User repository
     private final UserRepository userRepository;
 
+    /*
+     * Deleting an assignment unwinds a whole cleanup, so it touches every
+     * cached aggregate at once:
+     *   admin     - the "AI Verified" tile falls, and reversing the cleaner's
+     *     reward points can change who the "Leading Officer" is.
+     *   municipal - the site disappears from that corporation's counts.
+     *   leaderboard_top / homepage_impact_stats - step 7 below subtracts the
+     *     awarded points and deletes the RewardHistory row, which is the exact
+     *     mirror of RewardServiceImpl.rewardCleaner(). That method evicts these
+     *     two caches; this one never did, so the rankings and the platform
+     *     totals stayed stale here until the TTL expired. Same event, same
+     *     eviction - it belongs in this list too.
+     */
+    @Caching(evict = {
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "municipal_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "leaderboard_top", allEntries = true),
+            @CacheEvict(value = "homepage_impact_stats", allEntries = true)
+    })
     @Override
     public void deleteAssignment(CleanupAssignment assignment) {
 

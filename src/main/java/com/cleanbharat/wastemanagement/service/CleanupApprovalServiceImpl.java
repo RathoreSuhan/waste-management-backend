@@ -1,5 +1,6 @@
 package com.cleanbharat.wastemanagement.service;
 
+import com.cleanbharat.wastemanagement.config.RedisConfig;
 import com.cleanbharat.wastemanagement.dto.ApprovalDecisionRequest;
 import com.cleanbharat.wastemanagement.dto.CleanupActivityLogResponse;
 import com.cleanbharat.wastemanagement.dto.CleanupApprovalResponse;
@@ -28,6 +29,7 @@ import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupProposalRepository;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.core.Authentication;
@@ -114,6 +116,16 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
                 .collect(Collectors.toList());
     }
 
+    /*
+     * A decision here moves the corporation's own queue counters: an approval
+     * takes the site out of "Pending Proposals" and into "Active Cleanups",
+     * and a rejection that leaves nothing to review reopens the site.
+     *
+     * allEntries = true rather than a key matching this officer's token: it
+     * costs nothing at this scale and keeps every eviction in the codebase
+     * written the same way, which is what makes the set easy to audit.
+     */
+    @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
     @Override
     public CleanupApprovalResponse decideProposal(Long proposalId, ApprovalDecisionRequest request) {
         MunicipalCorporation corporation = getLoggedInCorporation();
@@ -252,14 +264,21 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
      * consistency mechanism: users expect the impact numbers and
      * leaderboard ranks to update IMMEDIATELY, not after the TTL.
      *
-     * NOTE: If decision is REJECTED or REVISION_REQUIRED,
-     *   eviction is NOT triggered because no data changed
-     *   (assignment stays AWAITING_APPROVAL, no points awarded).
+     * BOTH DASHBOARD CACHES ALSO MOVE, ON EITHER BRANCH:
+     *   Approved -> the corporation's "Completion Reviews" falls and
+     *     "Completed Cleanups" rises; the admin totals gain a resolved
+     *     report.
+     *   Rework   -> the site returns to "Active Cleanups" and the retired
+     *     AI verdict lowers the admin "AI Verified" count.
+     *   So neither branch leaves the counters untouched, and the eviction
+     *   is applied to the method as a whole rather than to one outcome.
      * ============================================================
      */
     @Caching(evict = {
             @CacheEvict(value = "homepage_impact_stats", allEntries = true),
-            @CacheEvict(value = "leaderboard_top", allEntries = true)
+            @CacheEvict(value = "leaderboard_top", allEntries = true),
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
     })
     @Override
     public CleanupApprovalResponse decideCompletion(Long assignmentId, ApprovalDecisionRequest request) {
@@ -346,6 +365,41 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
     // MUNICIPAL DASHBOARD READS (own corporation only)
     // ---------------------------------------------------------------------
 
+    /*
+     * @Cacheable — five COUNT queries scoped to one city body.
+     *
+     * WHY THE KEY IS THE SIGNED-IN PRINCIPAL AND NOT A CONSTANT:
+     *   This method takes NO arguments - the corporation is resolved inside
+     *   it, from the token. A constant key such as "'overview'" would
+     *   therefore give EVERY corporation the same cache entry, and the
+     *   second city to load its dashboard would be shown the first city's
+     *   queue counts. The key must carry the tenant, so it is derived from
+     *   the authenticated principal.
+     *
+     *   The principal comes from the JWT, never from anything the client
+     *   sends, so a caller cannot ask for another city's entry by changing
+     *   a request parameter.
+     *
+     *   toLowerCase() mirrors findByEmailIgnoreCase() in
+     *   getLoggedInCorporation(): without it a login differing only in
+     *   letter case would occupy a second entry for the same corporation.
+     *
+     * WHAT IS STORED:
+     *   Only the response DTO - two labels and five numbers. The
+     *   MunicipalCorporation entity itself is never cached; it carries the
+     *   account's password hash.
+     *
+     * FRESHNESS:
+     *   Proposal submission, proposal decisions, cleanup start, evidence
+     *   upload, completion decisions, report/assignment deletion and a
+     *   change to the corporation's own name or city all evict this cache.
+     *   The 5 minute TTL is only a safety net.
+     */
+    @Cacheable(
+            value = "municipal_dashboard_stats",
+            // Tenant of the entry = the authenticated corporation, taken from the token
+            key = RedisConfig.MUNICIPAL_STATS_KEY_EXPRESSION
+    )
     @Override
     @Transactional(readOnly = true)
     public MunicipalDashboardStatsResponse getDashboardStats() {

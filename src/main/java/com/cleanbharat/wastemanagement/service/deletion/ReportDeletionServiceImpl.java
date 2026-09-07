@@ -7,6 +7,8 @@ import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.VoteRepository;
 import com.cleanbharat.wastemanagement.service.CloudinaryService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +41,16 @@ public class ReportDeletionServiceImpl implements ReportDeletionService {
     // Cloudinary service
     private final CloudinaryService cloudinaryService;
 
+    /*
+     * Removing a report takes its counts out of both overviews: the admin
+     * report totals, and the "Relevant Reports" of the corporation the site
+     * was routed to. Annotated here rather than on AdminServiceImpl.deleteReport
+     * so the eviction holds for every caller, including citizen deletion.
+     */
+    @Caching(evict = {
+            @CacheEvict(value = "admin_dashboard_stats", allEntries = true),
+            @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
+    })
     @Override
     public void deleteReport(GarbageReport report) {
 

@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import com.cleanbharat.wastemanagement.dto.AuthResponse;
 import com.cleanbharat.wastemanagement.dto.LoginRequest;
 import com.cleanbharat.wastemanagement.security.JwtService;
+import org.springframework.cache.annotation.CacheEvict;
 
 import java.util.Optional;
 
@@ -26,6 +27,9 @@ public class AuthService {
     private final JwtService jwtService;
 
 
+    // The only path in the backend that creates a User row, so the admin
+    // "Total Users" / "Citizens" / "Sanitation Officers" tiles move here
+    @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     public String register(RegisterRequest request) {
         // Check if email already exists
         if (userRepository.existsByEmail(request.getEmail())) {

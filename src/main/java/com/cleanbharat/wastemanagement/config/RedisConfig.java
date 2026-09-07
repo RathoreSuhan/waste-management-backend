@@ -109,15 +109,44 @@ import java.util.Map;
  *  leaderboard_top (national) |  1   |  ~10 KB   |  5m
  *  leaderboard_top (state)    | ~10  |  ~10 KB   |  5m
  *  leaderboard_top (city)     | ~20  |  ~10 KB   |  5m
+ *  admin_dashboard_stats      |  1   |  ~1 KB    | 10m
+ *  municipal_dashboard_stats  | 1/city | ~1 KB   |  5m
  *  ---------------------------|------|-----------|------
- *  TOTAL ESTIMATED:           |      |  ~310 KB  |
+ *  TOTAL ESTIMATED:           |      |  ~320 KB  |
  *
  *  We use well under 1 MB of the 30 MB Redis free tier.
+ *
+ *  Only plain numbers and short labels are cached. Cloudinary image URLs
+ *  are deliberately kept out of Redis: an image-bearing list is both large
+ *  and viewer-specific, so it is always read fresh from PostgreSQL.
  * ============================================================
  */
 @Configuration
 @EnableCaching  // Activates Spring Cache Abstraction — scans for @Cacheable, @CacheEvict, @CachePut
 public class RedisConfig {
+
+    /**
+     * Cache key expression for the municipal dashboard overview.
+     *
+     * getDashboardStats() takes NO arguments - it resolves the corporation
+     * from the token inside the method - so Spring has nothing to build a key
+     * from. A constant key would hand every Municipal Corporation the SAME
+     * cache entry and one city would read another city's queue counts.
+     *
+     * So the key is the authenticated principal, which for a municipal login
+     * is that corporation's official email. It comes from the JWT and never
+     * from anything the client sends, so a caller cannot request another
+     * city's entry. toLowerCase() mirrors findByEmailIgnoreCase() in the
+     * service, so one corporation can never occupy two entries.
+     *
+     * Declared here as a constant, not inline in the annotation, because a
+     * broken SpEL string fails only at RUNTIME - and only on a cache read.
+     * A constant lets RedisCacheSerializationTest evaluate this exact
+     * expression and prove it resolves before it ever reaches production.
+     */
+    public static final String MUNICIPAL_STATS_KEY_EXPRESSION =
+            "T(org.springframework.security.core.context.SecurityContextHolder)"
+                    + ".context.authentication.name.toLowerCase()";
 
     /**
      * Builds the Jackson JSON serializer used for every Redis cache value.
@@ -231,6 +260,22 @@ public class RedisConfig {
          *     The public feed is viewer-specific (likedByMe per signed-in
          *     user) and dominated by Cloudinary image URLs, so it is
          *     always served fresh from PostgreSQL.
+         *
+         *   admin_dashboard_stats:
+         *     The admin overview counters (users, reports, cleanups,
+         *     comments, urgency ratings, leading officer). Identical for
+         *     every administrator, so a single shared key is correct.
+         *     Changes when: anybody registers or is deleted, a report is
+         *     filed or resolved, a cleanup is AI-verified, a comment or an
+         *     urgency rating is posted. Every one of those paths evicts.
+         *     TTL (10 min) = safety net for an observer-only screen.
+         *
+         *   municipal_dashboard_stats:
+         *     One city body's own queue counters. Keyed on the signed-in
+         *     corporation, NEVER on a single shared key - see the comment
+         *     on getDashboardStats(). The officer's own decisions move
+         *     these five numbers, so the safety net is tighter here.
+         *     Shorter TTL (5 min) = the desk they are working at.
          * ------------------------------------------------------------------ */
         Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
 
@@ -241,6 +286,16 @@ public class RedisConfig {
 
         cacheConfigurations.put(
                 "leaderboard_top",              // National, state, city leaderboards
+                defaultConfig.entryTtl(Duration.ofMinutes(5))   // 5 min TTL
+        );
+
+        cacheConfigurations.put(
+                "admin_dashboard_stats",        // Admin portal overview counters
+                defaultConfig.entryTtl(Duration.ofMinutes(10))  // 10 min TTL
+        );
+
+        cacheConfigurations.put(
+                "municipal_dashboard_stats",    // One entry per Municipal Corporation
                 defaultConfig.entryTtl(Duration.ofMinutes(5))   // 5 min TTL
         );
 

@@ -14,6 +14,7 @@ import com.cleanbharat.wastemanagement.repository.CommentRepository;
 import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -29,6 +30,9 @@ public class CommentServiceImpl implements CommentService {
     private final UserRepository userRepository;
     private final AnalyticsService analyticsService;
 
+    // Discussion writes move the admin "Comments" tile. Replies count too:
+    // the tile is a plain row count, which does not distinguish the two
+    @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     @Override
     public CommentResponse addComment(Long reportId, CommentRequest request) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -56,6 +60,7 @@ public class CommentServiceImpl implements CommentService {
         return mapToResponse(savedComment);
     }
 
+    @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     @Override
     public CommentResponse addReply(Long commentId, ReplyRequest request) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -98,6 +103,7 @@ public class CommentServiceImpl implements CommentService {
                 .toList();
     }
 
+    @CacheEvict(value = "admin_dashboard_stats", allEntries = true)
     @Override
     public void deleteComment(Long commentId) {
 
