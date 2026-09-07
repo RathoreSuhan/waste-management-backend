@@ -9,6 +9,7 @@ import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.entity.PublicFeedAnalytics;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,40 @@ public class PublicFeedServiceImpl implements PublicFeedService {
     private final UserRepository userRepository;
 
 
+    /*
+     * @Cacheable(value = "public_recent_cleanups", key = "'all'")
+     *
+     * WHAT THIS DOES:
+     *   Caches the entire public feed (completed + AI-verified cleanups)
+     *   under the key 'all' inside cache 'public_recent_cleanups'.
+     *
+     * CACHE HIT:
+     *   Redis returns List<PublicFeedResponse> directly (~2ms).
+     *   Zero Neon queries. No before/after image URL resolution.
+     *   Zero CleanupAssignment entity traversal.
+     *
+     * CACHE MISS:
+     *   Executes findCompletedVerifiedAssignments() → DB query,
+     *   maps each CleanupAssignment to PublicFeedResponse (including
+     *   Cloudinary URLs, AI verification details, analytics counts),
+     *   stores the list in Redis, returns it.
+     *
+     * WHY THIS ENDPOINT:
+     *   - Public feed powers the homepage "Success Stories" section.
+     *   - Every visitor hits this endpoint on page load.
+     *   - Query joins CleanupAssignment + GarbageReport + User +
+     *     MunicipalCorporation + PublicFeedAnalytics (5+ tables).
+     *   - Data only changes when a municipal officer officially
+     *     approves a cleanup completion (rare).
+     *   - High-read, low-write → PERFECT for caching.
+     *
+     * WHY @Cacheable (not manual):
+     *   Spring serializes the entire List<PublicFeedResponse> to JSON,
+     *   stores in Redis, and deserializes back on HIT.
+     *   No manual RedisTemplate operations needed.
+     * ============================================================
+     */
+    @Cacheable(value = "public_recent_cleanups", key = "'all'")
     @Override
     public List<PublicFeedResponse> getPublicFeed() {
 

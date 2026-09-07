@@ -11,6 +11,8 @@ import com.cleanbharat.wastemanagement.exception.UnauthorizedAssignmentAccessExc
 import com.cleanbharat.wastemanagement.repository.RewardHistoryRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Caching;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,49 @@ public class RewardServiceImpl implements RewardService {
     // Base reward points
     private static final int BASE_REWARD_POINTS = 50;
 
+    /*
+     * @Caching(evict = { ... }) — evicts leaderboard + homepage stats.
+     *
+     * WHEN THIS RUNS:
+     *   After rewardCleaner() successfully credits points to a cleaner
+     *   following municipal completion approval.
+     *
+     * WHY EVICT LEADERBOARD:
+     *   The cleaner's rewardPoints increased → their rank may have
+     *   changed. National, state, and city leaderboards are all
+     *   sorted by rewardPoints DESC, so the cached rankings are
+     *   now STALE.
+     *
+     *   allEntries = true evicts:
+     *     - "national"
+     *     - "state:maharashtra", "state:delhi", ...
+     *     - "city:kolkata", "city:mumbai", ...
+     *   All leaderboard cache entries are flushed, guaranteeing
+     *   the next read shows the updated rankings.
+     *
+     * WHY EVICT HOMEPAGE STATS:
+     *   The dashboard shows total reward points distributed across
+     *   the platform. When a cleaner earns 50 points, this total
+     *   increases → homepage_impact_stats cache is STALE.
+     *
+     * NOTE ON TIMING:
+     *   rewardCleaner() is called FROM decideCompletion(), which
+     *   ALSO has @Caching eviction. This means when a municipal
+     *   officer approves a cleanup:
+     *     1. decideCompletion() runs → evicts all 3 caches.
+     *     2. rewardCleaner() runs → evicts 2 caches (subset).
+     *
+     *   The second eviction is redundant BUT necessary:
+     *   If rewardCleaner() is ever called from another path
+     *   (e.g. admin bonus points), the cache MUST still evict.
+     *   Defensive programming: each method that changes data
+     *   is responsible for its own cache consistency.
+     * ============================================================
+     */
+    @Caching(evict = {
+            @CacheEvict(value = "leaderboard_top", allEntries = true),
+            @CacheEvict(value = "homepage_impact_stats", allEntries = true)
+    })
     @Override
     public void rewardCleaner(CleanupAssignment assignment) {
 

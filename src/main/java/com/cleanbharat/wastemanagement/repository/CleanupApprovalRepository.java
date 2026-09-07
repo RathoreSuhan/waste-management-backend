@@ -50,7 +50,7 @@ public interface CleanupApprovalRepository extends JpaRepository<CleanupApproval
      *
      * cleanup_approvals points at both cleanup_assignments and cleanup_proposals,
      * so these rows must go before either parent is removed, otherwise PostgreSQL
-     * refuses the delete with a foreign key violation (SQLSTATE 23503) and the
+     * refuses to delete with a foreign key violation (SQLSTATE 23503) and the
      * admin only sees a generic "conflicts with existing records" message.
      *
      * A bulk delete is used instead of the derived deleteByAssignment so a long

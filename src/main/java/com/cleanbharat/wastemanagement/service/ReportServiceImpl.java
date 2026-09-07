@@ -17,6 +17,7 @@ import com.cleanbharat.wastemanagement.service.ai.AIReportValidationService;
 import com.cleanbharat.wastemanagement.service.location.ReportDuplicateValidationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -38,6 +39,39 @@ public class ReportServiceImpl implements ReportService {
     private final ReportDuplicateValidationService reportDuplicateValidationService; // Duplicate validation
 
 
+    /*
+     * @CacheEvict(value = "homepage_impact_stats", allEntries = true)
+     *
+     * WHAT THIS DOES:
+     *   AFTER createReport() finishes successfully, Spring evicts
+     *   ALL entries from the 'homepage_impact_stats' cache.
+     *
+     * WHY ALL ENTRIES = true (not a single key):
+     *   When a citizen creates a report, the total report count
+     *   increments. Since there's only ONE key ("metrics") in this
+     *   cache, allEntries = true is the same as evicting that key.
+     *   Using allEntries = true keeps the code flexible if we
+     *   ever add more keys to this cache later.
+     *
+     * WHEN DOES THIS RUN?
+     *   After the method returns successfully (post-execution).
+     *   If createReport() throws an exception → eviction is NOT
+     *   triggered (the cache still holds the old, correct data).
+     *
+     * WHY EVICT HERE:
+     *   createReport() adds a new GarbageReport with status PENDING.
+     *   The next call to getDashboardAnalytics() must reflect the
+     *   new totalReports count. Without eviction, the cached
+     *   "totalReports = 42" would still show 42 until TTL expiry.
+     *
+     * TTL VS EVICTION TRADE-OFF:
+     *   TTL alone = stale data for up to 10 minutes.
+     *   Eviction = instant consistency.
+     *   Best practice: use BOTH (eviction for correctness + TTL
+     *   as a safety net for edge cases where eviction is missed).
+     * ============================================================
+     */
+    @CacheEvict(value = "homepage_impact_stats", allEntries = true)
     @Transactional
     @Override
     public ReportResponse createReport(CreateReportRequest request, MultipartFile image) {

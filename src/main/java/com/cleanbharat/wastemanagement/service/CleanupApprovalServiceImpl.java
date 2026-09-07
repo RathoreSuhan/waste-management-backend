@@ -28,6 +28,8 @@ import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupProposalRepository;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Caching;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -222,6 +224,44 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
                 .collect(Collectors.toList());
     }
 
+    /*
+     * @Caching(evict = { ... }) — multi-cache eviction.
+     *
+     * When a municipal officer APPROVES a cleanup completion,
+     * three things happen simultaneously:
+     *
+     *   1. The assignment becomes COMPLETED.
+     *      → public_recent_cleanups cache is STALE.
+     *        The new cleanup should appear in the public feed.
+     *
+     *   2. report status = RESOLVED (total resolved count +1).
+     *      → homepage_impact_stats cache is STALE.
+     *        totalResolved cleanups changed.
+     *
+     *   3. rewardCleaner() is called → cleaner earns points.
+     *      → leaderboard_top cache is STALE.
+     *        The cleaner's rank may have shifted.
+     *
+     * WHY EVICT ALL THREE:
+     *   The homepage dashboard, public feed, and leaderboard
+     *   are ALL dependent on this single completion event.
+     *   Evicting all three guarantees the next read from each
+     *   cache is a CACHE MISS → fresh data from PostgreSQL.
+     *
+     * TTL is a BACKUP safety net here, but eviction is the
+     * PRIMARY consistency mechanism — users expect the public
+     * feed to show the new cleanup IMMEDIATELY, not after 5 min.
+     *
+     * NOTE: If decision is REJECTED or REVISION_REQUIRED,
+     *   eviction is NOT triggered because no data changed
+     *   (assignment stays AWAITING_APPROVAL, no points awarded).
+     * ============================================================
+     */
+    @Caching(evict = {
+            @CacheEvict(value = "public_recent_cleanups", allEntries = true),
+            @CacheEvict(value = "homepage_impact_stats", allEntries = true),
+            @CacheEvict(value = "leaderboard_top", allEntries = true)
+    })
     @Override
     public CleanupApprovalResponse decideCompletion(Long assignmentId, ApprovalDecisionRequest request) {
         MunicipalCorporation corporation = getLoggedInCorporation();

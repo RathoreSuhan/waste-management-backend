@@ -14,6 +14,7 @@ import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.util.LocationUtil;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,43 @@ public class LeaderboardServiceImpl implements LeaderboardService {
     // Cleanup assignment repository
     private final CleanupAssignmentRepository cleanupAssignmentRepository;
 
+    /*
+     * @Cacheable(value = "leaderboard_top", key = "'national'")
+     *
+     * WHAT THIS DOES:
+     *   Caches the national leaderboard under key 'national' inside
+     *   the 'leaderboard_top' cache namespace.
+     *
+     * CACHE HIT:
+     *   Redis returns the LeaderboardResponse directly (~2ms).
+     *   No database query. No sorting. No rank computation.
+     *
+     * CACHE MISS:
+     *   Executes findTop10ByRoleOrderByRewardPointsDesc → DB query,
+     *   then iterates to compute completedCount per cleaner,
+     *   builds the response, stores in Redis, returns result.
+     *
+     * WHY CACHE THIS:
+     *   - National leaderboard is shown on the PUBLIC homepage.
+     *   - Accessed by every visitor, every few seconds.
+     *   - Query requires sorting ALL cleaners by rewardPoints DESC,
+     *     then N+1 queries for completedCount per cleaner.
+     *   - Data changes only when rewardCleaner() runs (rare event).
+     *   - Ideal candidate: high-read, low-write → CACHE HIT rate ~99%.
+     *
+     * KEY STRATEGY:
+     *   SpEL key = "'national'" → constant string key for national.
+     *   For city variant: "'city:' + #city.toLowerCase()".
+     *   This creates separate cache entries per geographic level,
+     *   so invalidating city leaderboard doesn't affect national.
+     *
+     * TTL:
+     *   5 minutes (configured in RedisConfig per-cache override).
+     *   If @CacheEvict is missed (edge case), stale ranks expire
+     *   within 5 minutes automatically.
+     * ============================================================
+     */
+    @Cacheable(value = "leaderboard_top", key = "'national'")
     @Override
     public LeaderboardResponse getPublicLeaderboard() {
 
@@ -47,6 +85,29 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         );
     }
 
+    /*
+     * @Cacheable(value = "leaderboard_top", key = "'state:' + #state.toLowerCase()")
+     *
+     * KEY GENERATION (SpEL):
+     *   #state → method parameter 'state'
+     *   .toLowerCase() → normalize so "Maharashtra" and "maharashtra"
+     *     map to the SAME cache key ("state:maharashtra").
+     *   Without normalization: "Maharashtra" and "maharashtra" would
+     *     be TWO separate cache entries → wasted memory + stale data.
+     *
+     * CACHE HIT: Returns cached state leaderboard (~2ms).
+     * CACHE MISS: Executes DB query with ORDER BY rewardPoints DESC.
+     *
+     * WHY THIS MATTERS FOR 30MB LIMIT:
+     *   Each state leaderboard is a List<LeaderboardEntryResponse>.
+     *   ~10 entries × ~500 bytes each = ~5KB per state.
+     *   With 30+ states: if every state is queried once, that's
+     *   ~150KB of cached data — still well within 30MB.
+     *   But with TTL=5min, only the most-recently-accessed states
+     *   stay cached. Least-recently-used entries auto-expire.
+     * ============================================================
+     */
+    @Cacheable(value = "leaderboard_top", key = "'state:' + #state.toLowerCase()")
     @Override
     public LeaderboardResponse getStateLeaderboard(String state) {
 
@@ -76,6 +137,26 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         );
     }
 
+    /*
+     * @Cacheable(value = "leaderboard_top", key = "'city:' + #city.toLowerCase()")
+     *
+     * CITY LEADERBOARD CACHING:
+     *   Same pattern as state leaderboard.
+     *   Key = "city:kolkata", "city:delhi", etc.
+     *
+     * WHY SEPARATE KEYS FOR EACH LEVEL:
+     *   National, state, and city leaderboards are stored
+     *   in the SAME Redis cache (leaderboard_top) but with
+     *   different key prefixes. This keeps related data
+     *   grouped while preventing cross-contamination.
+     *
+     *   When a cleaner earns points (rewardCleaner runs):
+     *     @CacheEvict(value = "leaderboard_top", allEntries = true)
+     *   evicts ALL leaderboard entries (national, all states, all cities).
+     *   This guarantees NO stale rankings anywhere.
+     * ============================================================
+     */
+    @Cacheable(value = "leaderboard_top", key = "'city:' + #city.toLowerCase()")
     @Override
     public LeaderboardResponse getCityLeaderboard(String city) {
 

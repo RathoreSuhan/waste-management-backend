@@ -108,6 +108,40 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
+
+		<!-- ============================================================
+		     REDIS CACHING DEPENDENCIES
+		     ============================================================
+		     These enable Spring Cache Abstraction backed by Redis.
+
+		     Why Redis?
+		     - Ultra-low latency (~2ms vs ~250ms for PostgreSQL queries)
+		     - Offloads expensive COUNT/SUM/AVG aggregations from Neon
+		     - Perfect for 30MB Redis Cloud Free Tier (we target <1MB)
+
+		     The 'starter-data-redis' includes:
+		     - Lettuce client (production-grade Redis client)
+		     - Spring Cache integration
+		     - Auto-configuration for SPRING_DATA_REDIS_URL
+		     ============================================================ -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+
+		<!-- ============================================================
+		     CONNECTION POOLING
+		     ============================================================
+		     Apache Commons Pool2 provides connection pooling for Lettuce,
+		     reducing connection establishment overhead on each Redis access.
+
+		     Without pooling: new TCP connection per cache operation (~5-10ms)
+		     With pooling: reuse existing connections (~0.1ms)
+		     ============================================================ -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-pool2</artifactId>
+		</dependency>
 	</dependencies>
 
 	<dependencyManagement>
