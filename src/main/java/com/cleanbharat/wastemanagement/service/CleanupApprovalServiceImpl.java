@@ -230,27 +230,27 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
      * When a municipal officer APPROVES a cleanup completion,
      * three things happen simultaneously:
      *
-     *   1. The assignment becomes COMPLETED.
-     *      → public_recent_cleanups cache is STALE.
-     *        The new cleanup should appear in the public feed.
+     *   1. The assignment becomes COMPLETED and the success story goes
+     *      live in the public feed. The feed is intentionally NOT cached,
+     *      so it is always read fresh from PostgreSQL.
      *
      *   2. report status = RESOLVED (total resolved count +1).
-     *      → homepage_impact_stats cache is STALE.
+     *      -> homepage_impact_stats cache is STALE.
      *        totalResolved cleanups changed.
      *
-     *   3. rewardCleaner() is called → cleaner earns points.
-     *      → leaderboard_top cache is STALE.
+     *   3. rewardCleaner() is called -> cleaner earns points.
+     *      -> leaderboard_top cache is STALE.
      *        The cleaner's rank may have shifted.
      *
-     * WHY EVICT ALL THREE:
-     *   The homepage dashboard, public feed, and leaderboard
-     *   are ALL dependent on this single completion event.
-     *   Evicting all three guarantees the next read from each
-     *   cache is a CACHE MISS → fresh data from PostgreSQL.
+     * WHY EVICT BOTH CACHES:
+     *   The homepage dashboard and the leaderboard are BOTH dependent
+     *   on this single completion event. Evicting both guarantees the
+     *   next read from each cache is a CACHE MISS and therefore a
+     *   fresh read from PostgreSQL.
      *
-     * TTL is a BACKUP safety net here, but eviction is the
-     * PRIMARY consistency mechanism — users expect the public
-     * feed to show the new cleanup IMMEDIATELY, not after 5 min.
+     * TTL is a BACKUP safety net here, but eviction is the PRIMARY
+     * consistency mechanism: users expect the impact numbers and
+     * leaderboard ranks to update IMMEDIATELY, not after the TTL.
      *
      * NOTE: If decision is REJECTED or REVISION_REQUIRED,
      *   eviction is NOT triggered because no data changed
@@ -258,7 +258,6 @@ public class CleanupApprovalServiceImpl implements CleanupApprovalService {
      * ============================================================
      */
     @Caching(evict = {
-            @CacheEvict(value = "public_recent_cleanups", allEntries = true),
             @CacheEvict(value = "homepage_impact_stats", allEntries = true),
             @CacheEvict(value = "leaderboard_top", allEntries = true)
     })

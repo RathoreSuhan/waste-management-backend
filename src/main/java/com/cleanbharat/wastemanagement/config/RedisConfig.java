@@ -98,7 +98,7 @@ import java.util.Map;
  *                                 or
  *      SPRING_DATA_REDIS_URL = rediss://default:<password>@<host>:<port>  (TLS)
  *
- *  Spring Boot auto-configures the Lettuce connection factory from this URL.
+ *  Spring Boot autoconfigures the Lettuce connection factory from this URL.
  *  No other configuration required.
  *
  *  MEMORY BUDGET (30 MB Free Tier):
@@ -109,9 +109,8 @@ import java.util.Map;
  *  leaderboard_top (national) |  1   |  ~10 KB   |  5m
  *  leaderboard_top (state)    | ~10  |  ~10 KB   |  5m
  *  leaderboard_top (city)     | ~20  |  ~10 KB   |  5m
- *  public_recent_cleanups     |  1   |  ~20 KB   |  5m
  *  ---------------------------|------|-----------|------
- *  TOTAL ESTIMATED:           |      |  ~330 KB  |
+ *  TOTAL ESTIMATED:           |      |  ~310 KB  |
  *
  *  We use well under 1 MB of the 30 MB Redis free tier.
  * ============================================================
@@ -119,6 +118,43 @@ import java.util.Map;
 @Configuration
 @EnableCaching  // Activates Spring Cache Abstraction — scans for @Cacheable, @CacheEvict, @CachePut
 public class RedisConfig {
+
+    /**
+     * Builds the Jackson JSON serializer used for every Redis cache value.
+     *
+     * A custom ObjectMapper is required (the application-wide one cannot be
+     * reused) because Redis needs polymorphic type info embedded in the JSON
+     * so it knows which class to reconstruct on cache read, e.g.
+     *   {"@class":"com.cleanbharat...DashboardAnalyticsResponse","totalReports":42}
+     *
+     * JavaTimeModule: handles LocalDateTime / LocalDate fields - without it
+     * they serialize as numeric arrays and deserialization crashes.
+     *
+     * activateDefaultTyping: embeds the "@class" field for safe polymorphic
+     * deserialization. NON_FINAL skips final types (String, enums, etc.).
+     *
+     * Package-private + static so tests can round-trip cached DTOs through
+     * the exact same serialization path used in production.
+     */
+    static GenericJackson2JsonRedisSerializer cacheValueSerializer() {
+
+        ObjectMapper redisObjectMapper = new ObjectMapper();
+
+        // Register JavaTimeModule so LocalDateTime fields serialize/deserialize cleanly
+        redisObjectMapper.registerModule(new JavaTimeModule());
+
+        // Write dates as ISO-8601 strings ("2025-01-15T10:30:00") not as [2025,1,15,...] arrays
+        redisObjectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
+        // Embed Java class name in JSON for safe polymorphic deserialization
+        redisObjectMapper.activateDefaultTyping(
+                LaissezFaireSubTypeValidator.instance,
+                ObjectMapper.DefaultTyping.NON_FINAL,
+                JsonTypeInfo.As.PROPERTY
+        );
+
+        return new GenericJackson2JsonRedisSerializer(redisObjectMapper);
+    }
 
     /**
      * Builds the primary CacheManager used by all @Cacheable/@CacheEvict annotations.
@@ -135,48 +171,14 @@ public class RedisConfig {
     public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory) {
 
         /* ------------------------------------------------------------------
-         * Step 1: Build a custom ObjectMapper for Redis JSON serialization.
-         *
-         * We cannot reuse the application-wide ObjectMapper directly because
-         * Redis needs polymorphic type info embedded in JSON so it knows what
-         * class to deserialize back into (e.g. DashboardAnalyticsResponse vs
-         * LeaderboardResponse).
-         *
-         * JavaTimeModule: handles LocalDateTime, LocalDate, etc.
-         *   Without it, LocalDateTime serializes as a numeric timestamp array,
-         *   not a human-readable ISO string — and deserialization crashes.
-         *
-         * activateDefaultTyping: embeds "@class" field in JSON so Redis
-         *   knows which Java class to reconstruct on cache read.
-         *   Example: {"@class":"com.cleanbharat...DashboardAnalyticsResponse",
-         *             "totalReports":42, ...}
-         * ------------------------------------------------------------------ */
-        ObjectMapper redisObjectMapper = new ObjectMapper();
-
-        // Register JavaTimeModule so LocalDateTime fields serialize/deserialize cleanly
-        redisObjectMapper.registerModule(new JavaTimeModule());
-
-        // Write dates as ISO-8601 strings ("2025-01-15T10:30:00") not as [2025,1,15,...] arrays
-        redisObjectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-
-        // Embed Java class name in JSON for safe polymorphic deserialization
-        redisObjectMapper.activateDefaultTyping(
-                LaissezFaireSubTypeValidator.instance,
-                ObjectMapper.DefaultTyping.NON_FINAL,
-                JsonTypeInfo.As.PROPERTY
-        );
-
-        /* ------------------------------------------------------------------
-         * Step 2: Create a JSON serializer backed by our custom ObjectMapper.
+         * Step 1: Create the JSON serializer used for all cache values.
          *
          * GenericJackson2JsonRedisSerializer stores values as JSON strings
-         * in Redis — readable via redis-cli, redis-insight, or any Redis GUI.
-         *
-         * Alternative: JdkSerializationRedisSerializer (Java binary format)
-         * → NOT used: unreadable, tied to exact JVM version, breaks on refactor.
+         * in Redis - readable via redis-cli, redis-insight, or any Redis GUI.
+         * (JdkSerializationRedisSerializer is NOT used: unreadable, tied to
+         * the exact JVM version, breaks on refactors.)
          * ------------------------------------------------------------------ */
-        GenericJackson2JsonRedisSerializer jsonSerializer =
-                new GenericJackson2JsonRedisSerializer(redisObjectMapper);
+        GenericJackson2JsonRedisSerializer jsonSerializer = cacheValueSerializer();
 
         /* ------------------------------------------------------------------
          * Step 3: Define the DEFAULT cache configuration.
@@ -225,10 +227,10 @@ public class RedisConfig {
          *     High read frequency (homepage + leaderboard page).
          *     Shorter TTL (5 min) = rank changes visible faster.
          *
-         *   public_recent_cleanups:
-         *     Changes when: a new cleanup is officially completed by municipal.
-         *     Very high read traffic (homepage success stories section).
-         *     Shorter TTL (5 min) = new success stories appear quickly.
+         *   public_recent_cleanups: NOT cached (intentionally removed).
+         *     The public feed is viewer-specific (likedByMe per signed-in
+         *     user) and dominated by Cloudinary image URLs, so it is
+         *     always served fresh from PostgreSQL.
          * ------------------------------------------------------------------ */
         Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
 
@@ -239,11 +241,6 @@ public class RedisConfig {
 
         cacheConfigurations.put(
                 "leaderboard_top",              // National, state, city leaderboards
-                defaultConfig.entryTtl(Duration.ofMinutes(5))   // 5 min TTL
-        );
-
-        cacheConfigurations.put(
-                "public_recent_cleanups",       // Homepage success stories / public feed
                 defaultConfig.entryTtl(Duration.ofMinutes(5))   // 5 min TTL
         );
 

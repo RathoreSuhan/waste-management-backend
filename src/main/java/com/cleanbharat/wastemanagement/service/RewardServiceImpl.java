@@ -62,8 +62,8 @@ public class RewardServiceImpl implements RewardService {
      *   rewardCleaner() is called FROM decideCompletion(), which
      *   ALSO has @Caching eviction. This means when a municipal
      *   officer approves a cleanup:
-     *     1. decideCompletion() runs → evicts all 3 caches.
-     *     2. rewardCleaner() runs → evicts 2 caches (subset).
+     *     1. decideCompletion() runs → evicts both caches.
+     *     2. rewardCleaner() runs → evicts both caches again (redundant but defensive).
      *
      *   The second eviction is redundant BUT necessary:
      *   If rewardCleaner() is ever called from another path

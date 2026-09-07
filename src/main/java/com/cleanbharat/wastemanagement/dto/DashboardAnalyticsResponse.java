@@ -1,11 +1,15 @@
 package com.cleanbharat.wastemanagement.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.NoArgsConstructor;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
+@NoArgsConstructor
+@AllArgsConstructor // Required by Jackson to rebuild this DTO on a Redis cache HIT
 @Builder
 public class DashboardAnalyticsResponse {
 
