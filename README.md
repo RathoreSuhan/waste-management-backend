@@ -320,6 +320,9 @@ Publish to Public Feed
 | Spring Data JPA | ORM Layer |
 | Hibernate | Database Persistence |
 | PostgreSQL | Relational Database |
+| Redis | In-Memory Cache for Dashboards & Leaderboards |
+| Spring Data Redis + Spring Cache | Declarative Caching (`@Cacheable` / `@CacheEvict`) with Lettuce client |
+| Apache Commons Pool2 | Redis Connection Pooling |
 | Maven | Dependency Management |
 | Lombok | Boilerplate Code Reduction |
 | OpenFeign | External AI API Communication |
@@ -1140,6 +1143,64 @@ This algorithm combines **geospatial filtering** with **distance-based validatio
 
 ---
 
+# ⚡ Redis Caching Architecture
+
+The backend uses **Redis** (via Spring Data Redis + Spring Cache Abstraction) as a read-through cache for expensive, read-heavy aggregates. PostgreSQL remains the source of truth — Redis only holds small response DTOs so dashboards and leaderboards load in **~2 ms** instead of **~250 ms**.
+
+```text
+Client
+  │
+  ▼
+@Service method (@Cacheable)
+  │
+  ├──► CACHE HIT  → Redis returns DTO (no SQL)
+  │
+  └──► CACHE MISS → PostgreSQL query → store DTO in Redis with TTL → return
+```
+
+Writes never update the cache directly. They **evict** it (`@CacheEvict` / `@Caching`), so the next read is a fresh miss. Every cached view therefore uses **eviction for correctness + TTL as a safety net**.
+
+## Cached Views
+
+| Cache | Key | TTL | Producer | Why cache this? |
+|--------|-----|-----|----------|-----------------|
+| `homepage_impact_stats` | `'metrics'` | 10 min | `AnalyticsServiceImpl.getDashboardAnalytics()` | 6+ `COUNT` / `AVG` queries on every homepage visit; changes rarely |
+| `leaderboard_top` | `'national'`, `'state:<name>'`, `'city:<name>'` | 5 min | `LeaderboardServiceImpl` (national / state / city) | Top-10 sort + per-cleaner counts, shown publicly; changes only on reward |
+| `admin_dashboard_stats` | `'overview'` | 10 min | `AdminServiceImpl.getDashboard()` | 10 aggregate counts; identical for every admin, so one shared key is safe |
+| `municipal_dashboard_stats` | signed-in corporation email (lowercased) | 5 min | `CleanupApprovalServiceImpl.getDashboardStats()` | 5 city-scoped counts; per-tenant key so one city can never read another city's numbers |
+
+Total footprint is **~320 KB** — well under 1 MB of a 30 MB free tier. Only numbers and short labels are cached; Cloudinary image URLs and viewer-specific fields such as `likedByMe` are deliberately **never** cached.
+
+## Eviction Map (what invalidates what)
+
+| Write event | Evicts | Reason |
+|-------------|--------|--------|
+| Report created | homepage, admin, municipal | New `PENDING` report moves all three overviews |
+| Register / vote / comment / reply | admin | User, vote and discussion totals shift |
+| Proposal submitted / decided | municipal | Site moves between pending and active queues |
+| Cleanup started / proof uploaded | admin + municipal | Report leaves `PENDING`; AI-verified count and queues move |
+| Completion approved or sent for rework | homepage, leaderboard, admin, municipal | Report `RESOLVED` +1, reward points, ranks and city queues move together |
+| Reward credited | leaderboard, homepage, admin | Points reorder the rankings (defensive double-eviction with completion approval) |
+| Assignment / report / user / corporation deleted | all affected caches | Counts, ranks and queues drop together |
+
+```text
+Cleanup lifecycle × cache (verified against the Complete Cleanup Lifecycle):
+
+create → evicts homepage/admin/municipal
+propose / decide → evicts municipal
+start / upload → evicts admin/municipal
+approve completion → evicts homepage + leaderboard + admin + municipal
+```
+
+## Configuration Notes
+
+- Enabled once via `@EnableCaching` in `config/RedisConfig.java`; per-cache TTLs and JSON serialization (readable keys, Jackson DTO values, nulls never cached) live in the `RedisCacheManager` bean.
+- Connection comes from a single environment variable (`SPRING_DATA_REDIS_URL`, `redis://` or `rediss://` for TLS) using the default Lettuce client + Commons Pool2 — no credentials in `application.properties`.
+- Covered by `RedisCacheSerializationTest` (DTO round-trip + municipal SpEL key isolation).
+- Full interview-ready walkthrough with side-by-side code commentary: `Clean_Bharat_Redis_Caching_Revision_Notes.pdf` in the repository root.
+
+---
+
 # 🚀 Advanced Backend Features
 
 Beyond core modules like authentication, reporting, AI validation, and community engagement, the backend includes several advanced systems that automate the complete waste management lifecycle. These modules work together to transform Clean Bharat from a simple reporting application into a **production-oriented smart waste management platform**.
@@ -1696,6 +1757,7 @@ Several optimizations were implemented across the backend, including:
 - Reduced unnecessary database access
 - Efficient aggregate repository queries
 - Centralized business logic reuse
+- **Redis caching for read-heavy aggregates** — homepage impact stats, leaderboards, and both dashboards are served from Redis (~2 ms) instead of repeated `COUNT` / `AVG` queries against PostgreSQL (~250 ms). See **⚡ Redis Caching Architecture** below.
 
 ---
 
@@ -1727,7 +1789,7 @@ src
     ├── java
     │   └── com.cleanbharat.wastemanagement
     │       ├── client                # External API clients (Gemini AI)
-    │       ├── config                # Security, Cloudinary & AI configurations
+    │       ├── config                # Security, Cloudinary, AI & Redis cache configuration
     │       ├── controller            # REST Controllers
     │       ├── dto                   # Request & Response DTOs
     │       ├── entity                # JPA Entities
@@ -1762,6 +1824,7 @@ Ensure the following software is installed on your system.
 - Java 21
 - Maven 3.9+
 - PostgreSQL
+- Redis (local Docker or managed cloud — required for dashboard / leaderboard caches)
 - Git
 - IntelliJ IDEA (Recommended)
 - Postman (For API Testing)
@@ -1836,6 +1899,11 @@ app.ai.confidence-threshold=0.85
 app.duplicate.radius-meters=100
 
 app.duplicate.max-age-days=30
+
+# Redis Caching (connection URL is provided via environment, never committed)
+
+# Example: SPRING_DATA_REDIS_URL=redis://default:<password>@<host>:<port>
+# (or rediss://... for TLS). Spring Boot auto-configures Lettuce from this URL.
 ```
 
 > **Note:** Never commit API keys, secrets, or credentials to a public repository. Use environment variables or external configuration in production deployments.
@@ -2110,7 +2178,7 @@ Although the backend is feature-rich, several exciting enhancements are planned.
 
 ## Performance
 
-- Redis Caching
+- Redis cache tuning (hit-rate metrics, stampede guards for hotter keys)
 - Docker Deployment
 - Kubernetes
 - CI/CD Pipeline
@@ -2150,6 +2218,8 @@ Key areas explored include:
 - Layered Architecture
 - Exception Handling
 - Transaction Management
+- Redis Caching with Spring Cache Abstraction (`@Cacheable` / `@CacheEvict`, TTL + eviction)
+- Cache consistency for multi-tenant dashboards (per-city keys, shared admin key)
 - Clean Code Principles
 - Scalable Backend Design
 - Unit Testing with JUnit 5
@@ -2193,6 +2263,8 @@ Special thanks to the open-source community and the technologies that made this 
 
 - Spring Boot
 - Spring Security
+- Spring Data Redis
+- Redis
 - Hibernate
 - PostgreSQL
 - Cloudinary
