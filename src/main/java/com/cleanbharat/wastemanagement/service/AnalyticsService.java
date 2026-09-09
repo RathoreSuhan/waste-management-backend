@@ -1,6 +1,7 @@
 package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.DashboardAnalyticsResponse;
+import com.cleanbharat.wastemanagement.dto.PlatformImpactResponse;
 import com.cleanbharat.wastemanagement.dto.ReportAnalyticsResponse;
 import java.util.List;
 
@@ -17,4 +18,7 @@ public interface AnalyticsService {
 
     // Dashboard analytics of the whole system
     DashboardAnalyticsResponse getDashboardAnalytics();
+
+    // Public Platform Impact counters for the homepage (cached in Redis)
+    PlatformImpactResponse getPlatformImpact();
 }

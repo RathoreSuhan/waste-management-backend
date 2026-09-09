@@ -1164,12 +1164,15 @@ Writes never update the cache directly. They **evict** it (`@CacheEvict` / `@Cac
 
 | Cache | Key | TTL | Producer | Why cache this? |
 |--------|-----|-----|----------|-----------------|
-| `homepage_impact_stats` | `'metrics'` | 10 min | `AnalyticsServiceImpl.getDashboardAnalytics()` | 6+ `COUNT` / `AVG` queries on every homepage visit; changes rarely |
+| `homepage_impact_stats` | `'metrics'` | 10 min | `AnalyticsServiceImpl.getDashboardAnalytics()` (authenticated) | 6+ `COUNT` / `AVG` queries for the internal dashboard; changes rarely |
+| `homepage_impact_stats` | `'platform-impact'` | 10 min | `AnalyticsServiceImpl.getPlatformImpact()` → `GET /api/analytics/platform-impact` (public) | The 4 homepage **Platform Impact** counters in one small JSON; the only `homepage_impact_stats` key the anonymous homepage actually reads |
 | `leaderboard_top` | `'national'`, `'state:<name>'`, `'city:<name>'` | 5 min | `LeaderboardServiceImpl` (national / state / city) | Top-10 sort + per-cleaner counts, shown publicly; changes only on reward |
 | `admin_dashboard_stats` | `'overview'` | 10 min | `AdminServiceImpl.getDashboard()` | 10 aggregate counts; identical for every admin, so one shared key is safe |
 | `municipal_dashboard_stats` | signed-in corporation email (lowercased) | 5 min | `CleanupApprovalServiceImpl.getDashboardStats()` | 5 city-scoped counts; per-tenant key so one city can never read another city's numbers |
 
 Total footprint is **~320 KB** — well under 1 MB of a 30 MB free tier. Only numbers and short labels are cached; Cloudinary image URLs and viewer-specific fields such as `likedByMe` are deliberately **never** cached.
+
+> **Why two keys in one cache?** `GET /api/analytics/dashboard` requires auth, so the anonymous homepage could never warm `'metrics'` — Redis showed only `leaderboard_top::national`. The fix adds public `GET /api/analytics/platform-impact` (`PlatformImpactResponse{reportsFiled, sitesCleared, cleanersRanked, verifiedCleanups}`) under the **same** cache name with key `'platform-impact'`. Existing `@CacheEvict(allEntries = true)` sites therefore invalidate it with no extra wiring. The frontend (`HomeImpactBand`) tries the cached endpoint first and falls back to counting `/api/reports` + `/api/public-feed` + `/api/leaderboard` only if it fails.
 
 ## Eviction Map (what invalidates what)
 
@@ -1196,7 +1199,7 @@ approve completion → evicts homepage + leaderboard + admin + municipal
 
 - Enabled once via `@EnableCaching` in `config/RedisConfig.java`; per-cache TTLs and JSON serialization (readable keys, Jackson DTO values, nulls never cached) live in the `RedisCacheManager` bean.
 - Connection comes from a single environment variable (`SPRING_DATA_REDIS_URL`, `redis://` or `rediss://` for TLS) using the default Lettuce client + Commons Pool2 — no credentials in `application.properties`.
-- Covered by `RedisCacheSerializationTest` (DTO round-trip + municipal SpEL key isolation).
+- Covered by `RedisCacheSerializationTest` (DTO round-trip + municipal SpEL key isolation). `PlatformImpactResponse` uses the same Jackson-safe shape (`@NoArgsConstructor` + `@AllArgsConstructor`) so a cache HIT always deserializes.
 - Full interview-ready walkthrough with side-by-side code commentary: `Clean_Bharat_Redis_Caching_Revision_Notes.pdf` in the repository root.
 
 ---

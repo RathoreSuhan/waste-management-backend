@@ -1,12 +1,17 @@
 package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.DashboardAnalyticsResponse;
+import com.cleanbharat.wastemanagement.dto.PlatformImpactResponse;
 import com.cleanbharat.wastemanagement.dto.ReportAnalyticsResponse;
 import com.cleanbharat.wastemanagement.entity.Comment;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
+import com.cleanbharat.wastemanagement.enums.ReportStatus;
+import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
+import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.CommentRepository;
 import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
+import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.repository.VoteRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
@@ -22,6 +27,8 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     private final GarbageReportRepository reportRepository;
     private final CommentRepository commentRepository;
     private final VoteRepository voteRepository;
+    private final CleanupAssignmentRepository assignmentRepository; // counts verified cleanups
+    private final UserRepository userRepository; // counts ranked cleaners
 
     @Override
     public void recalculateEngagementScore(Long reportId) {
@@ -203,6 +210,23 @@ public class AnalyticsServiceImpl implements AnalyticsService {
                 .averageUrgencyScore(averageUrgencyScore == null ? 0.0 : averageUrgencyScore)
                 .averageEngagementScore(averageEngagementScore == null ? 0.0 : averageEngagementScore)
                 .mostTrendingReportId(trendingReport == null ? null : trendingReport.getId())
+                .build();
+    }
+
+    /*
+     * @Cacheable(value = "homepage_impact_stats", key = "'platform-impact'")
+     * Public Platform Impact counters. Same cache name as getDashboardAnalytics
+     * so existing @CacheEvict(allEntries = true) sites already invalidate it.
+     * RESOLVED == COMPLETED 1:1 per lifecycle (decideCompletion sets both).
+     */
+    @Cacheable(value = "homepage_impact_stats", key = "'platform-impact'")
+    @Override
+    public PlatformImpactResponse getPlatformImpact() {
+        return PlatformImpactResponse.builder()
+                .reportsFiled(reportRepository.count()) // every citizen report
+                .sitesCleared(reportRepository.countByStatus(ReportStatus.RESOLVED)) // signed-off only
+                .cleanersRanked(userRepository.countByRole(Role.ROLE_CLEANER)) // not top-10 capped
+                .verifiedCleanups(assignmentRepository.countByAiVerifiedTrue()) // photo-confirmed
                 .build();
     }
 

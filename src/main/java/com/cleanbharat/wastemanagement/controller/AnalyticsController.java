@@ -1,6 +1,7 @@
 package com.cleanbharat.wastemanagement.controller;
 
 import com.cleanbharat.wastemanagement.dto.DashboardAnalyticsResponse;
+import com.cleanbharat.wastemanagement.dto.PlatformImpactResponse;
 import com.cleanbharat.wastemanagement.dto.ReportAnalyticsResponse;
 import com.cleanbharat.wastemanagement.service.AnalyticsService;
 import lombok.RequiredArgsConstructor;
@@ -33,5 +34,11 @@ public class AnalyticsController {
     public ResponseEntity<DashboardAnalyticsResponse> getDashboardAnalytics() {
         DashboardAnalyticsResponse response = analyticsService.getDashboardAnalytics();
         return ResponseEntity.ok(response);
+    }
+
+    // Public Platform Impact counters for the homepage (cached, no auth needed)
+    @GetMapping("/platform-impact")
+    public ResponseEntity<PlatformImpactResponse> getPlatformImpact() {
+        return ResponseEntity.ok(analyticsService.getPlatformImpact());
     }
 }

@@ -148,7 +148,8 @@ public class SecurityConfig {
                                 "/api/reports/*",               // A single report
                                 "/api/comments/report/*",       // Discussion thread
                                 "/api/analytics/trending",      // Engagement ranking
-                                "/api/analytics/report/*"       // Per-report counts
+                                "/api/analytics/report/*",      // Per-report counts
+                                "/api/analytics/platform-impact" // Public homepage counters (cached)
                         ).permitAll()
 
 
@@ -195,7 +196,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/cleanup-activity-logs/**")
                         .hasRole("CLEANER")
 
-                        // Municipal approvals: officers authorise cleaners and sign off completed work
+                        // Municipal approvals: officers authorize cleaners and sign off completed work
                         .requestMatchers("/api/cleanup-approvals/**")
                         .hasRole("MUNICIPAL_OFFICER")
 
