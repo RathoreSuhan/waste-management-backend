@@ -221,7 +221,7 @@ public class RedisConfig {
          *   - disableCachingNullValues(): If a method returns null, do NOT
          *     cache it. Null caching wastes memory and hides real errors.
          *   - usePrefix(true): Redis key becomes "cacheName::spELkey"
-         *     e.g. "homepage_impact_stats::metrics" — prevents accidental
+         *     e.g. "homepage_impact_stats::platform-impact" — prevents accidental
          *     key collisions between different caches storing the same key.
          *   - StringRedisSerializer for keys: Cache keys are plain strings
          *     (e.g. "national", "state:Maharashtra"), not serialized objects.

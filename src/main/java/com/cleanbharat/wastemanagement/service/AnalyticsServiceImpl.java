@@ -132,50 +132,8 @@ public class AnalyticsServiceImpl implements AnalyticsService {
                 .toList();
     }
 
-    /*
-     * @Cacheable(value = "homepage_impact_stats", key = "'metrics'")
-     *
-     * WHAT THIS DOES:
-     *   Tells Spring: "Before executing this method, check Redis cache
-     *   named 'homepage_impact_stats' for an entry with key 'metrics'.
-     *
-     * CACHE HIT:
-     *   Redis has a value → return it immediately (~2ms response).
-     *   Method body NEVER executes. Neon PostgreSQL is NOT touched.
-     *
-     * CACHE MISS (first call or after eviction):
-     *   Redis has no value → execute method body (6+ SQL COUNT/SUM/AVG queries),
-     *   store the result in Redis under key 'metrics', then return it (~250ms).
-     *
-     * NEXT CALL: Redis HIT kicks in for ALL callers until:
-     *   a) TTL expires (10 minutes — safety net)
-     *   b) @CacheEvict is triggered by a data-changing operation
-     *
-     * WHY THIS ENDPOINT:
-     *   This method runs 6+ heavy SQL aggregations:
-     *     - reportRepository.count() → COUNT(*) on all reports
-     *     - voteRepository.countByRatingIsNotNull() → COUNT with WHERE clause
-     *     - commentRepository.countTopLevelComments() → COUNT with filter
-     *     - commentRepository.countReplies() → COUNT with filter
-     *     - reportRepository.getAverageUrgencyScore() → AVG aggregation
-     *     - reportRepository.getAverageEngagementScore() → AVG aggregation
-     *     - reportRepository.findTopByOrderByEngagementScoreDesc() → ORDER BY LIMIT 1
-     *
-     *   These queries hit multiple tables every single request from the
-     *   homepage, public leaderboard, and external dashboards.
-     *   Caching reduces load on Neon PostgreSQL by ~99% for this endpoint.
-     *
-     * WHY @Cacheable INSTEAD OF MANUAL CACHING:
-     *   Spring handles the entire cache-aside pattern automatically:
-     *     - Check Redis before execution
-     *     - Execute only on MISS
-     *     - Serialize result to JSON
-     *     - Store in Redis with TTL
-     *     - Return result
-     *   No boilerplate RedisTemplate.get/set code needed.
-     * ============================================================
-     */
-    @Cacheable(value = "homepage_impact_stats", key = "'metrics'")
+    // Intentionally uncached: authenticated low-traffic totals, always fresh;
+    // public homepage uses cached getPlatformImpact() (works logged in or out).
     @Override
     public DashboardAnalyticsResponse getDashboardAnalytics() {
 
@@ -215,8 +173,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
 
     /*
      * @Cacheable(value = "homepage_impact_stats", key = "'platform-impact'")
-     * Public Platform Impact counters. Same cache name as getDashboardAnalytics
-     * so existing @CacheEvict(allEntries = true) sites already invalidate it.
+     * Sole key in this cache; existing @CacheEvict(allEntries = true) sites clear it.
      * RESOLVED == COMPLETED 1:1 per lifecycle (decideCompletion sets both).
      */
     @Cacheable(value = "homepage_impact_stats", key = "'platform-impact'")

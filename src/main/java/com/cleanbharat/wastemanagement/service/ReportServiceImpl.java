@@ -49,7 +49,7 @@ public class ReportServiceImpl implements ReportService {
      *
      * WHY ALL ENTRIES = true (not a single key):
      *   When a citizen creates a report, the total report count
-     *   increments. Since there's only ONE key ("metrics") in this
+     *   increments. Since there's only ONE key ("platform-impact") in this
      *   cache, allEntries = true is the same as evicting that key.
      *   Using allEntries = true keeps the code flexible if we
      *   ever add more keys to this cache later.
@@ -61,9 +61,9 @@ public class ReportServiceImpl implements ReportService {
      *
      * WHY EVICT HERE:
      *   createReport() adds a new GarbageReport with status PENDING.
-     *   The next call to getDashboardAnalytics() must reflect the
-     *   new totalReports count. Without eviction, the cached
-     *   "totalReports = 42" would still show 42 until TTL expiry.
+     *   The next call to getPlatformImpact() must reflect the
+     *   new reportsFiled count. Without eviction, the cached
+     *   "reportsFiled = 42" would still show 42 until TTL expiry.
      *
      * TTL VS EVICTION TRADE-OFF:
      *   TTL alone = stale data for up to 10 minutes.
