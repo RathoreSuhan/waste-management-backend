@@ -1172,6 +1172,9 @@ Writes never update the cache directly. They **evict** it (`@CacheEvict` / `@Cac
 Total footprint is **~320 KB** — well under 1 MB of a 30 MB free tier. Only numbers and short labels are cached; Cloudinary image URLs and viewer-specific fields such as `likedByMe` are deliberately **never** cached.
 
 
+
+
+
 ## Eviction Map (what invalidates what)
 
 | Write event | Evicts | Reason |

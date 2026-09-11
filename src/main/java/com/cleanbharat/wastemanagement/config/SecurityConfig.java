@@ -1,9 +1,12 @@
 package com.cleanbharat.wastemanagement.config;
 
 import com.cleanbharat.wastemanagement.security.JwtAuthenticationFilter;
+import com.cleanbharat.wastemanagement.security.RateLimitFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -18,6 +21,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @RequiredArgsConstructor
 public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    private final RateLimitFilter rateLimitFilter;
 
     /**
      * CORS Configuration
@@ -48,6 +53,11 @@ public class SecurityConfig {
 
         // Allow all request headers (Authorization, Content-Type, etc.)
         configuration.addAllowedHeader("*");
+
+        // Retry-After is not a CORS-safelisted response header, so the browser
+        // hides it from JavaScript unless it is exposed explicitly. The frontend
+        // needs it to tell the user how long to wait after a 429.
+        configuration.addExposedHeader(HttpHeaders.RETRY_AFTER);
 
         // Allow credentials (cookies, JWT token in header)
         configuration.setAllowCredentials(true);
@@ -207,8 +217,35 @@ public class SecurityConfig {
                 .addFilterBefore(
                         jwtAuthenticationFilter,
                         UsernamePasswordAuthenticationFilter.class
+                )
+
+                // Rate limit filter - runs once the JWT filter has resolved the
+                // principal, so authenticated callers are counted per account
+                // instead of per IP, and still before authorization rejects,
+                // so probing a forbidden route also spends the caller's quota
+                .addFilterAfter(
+                        rateLimitFilter,
+                        JwtAuthenticationFilter.class
                 );
 
         return http.build();
+    }
+
+    /**
+     * Spring Boot auto-registers every Filter bean with the servlet container,
+     * which would run RateLimitFilter a second time outside this chain - where
+     * the SecurityContext is still empty, so an authenticated caller would also
+     * burn a slot from their IP bucket. Registering it security-chain-only here.
+     */
+    @Bean
+    public FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(
+            RateLimitFilter rateLimitFilter
+    ) {
+        FilterRegistrationBean<RateLimitFilter> registration =
+                new FilterRegistrationBean<>(rateLimitFilter);
+
+        registration.setEnabled(false);
+
+        return registration;
     }
 }
