@@ -2,14 +2,22 @@ package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.LikeResponse;
 import com.cleanbharat.wastemanagement.dto.PublicFeedResponse;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 
-
-import java.util.List;
 
 public interface PublicFeedService {
 
-    // Returns all completed AI-verified cleanups
-    List<PublicFeedResponse> getPublicFeed();
+    /**
+     * One page of completed AI-verified cleanups, newest first.
+     *
+     * The feed was returned whole. It is now cut into pages on the server,
+     * so a visitor reads ten stories rather than downloading every cleanup
+     * ever verified.
+     *
+     * @param page zero-based page index
+     * @param size rows per page, clamped by PaginationUtil
+     */
+    PageResponse<PublicFeedResponse> getPublicFeed(int page, int size);
 
     // Returns one completed cleanup by report ID
     PublicFeedResponse getPublicFeedByReportId(Long reportId);

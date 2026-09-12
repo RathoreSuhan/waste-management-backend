@@ -86,6 +86,20 @@ public interface VoteRepository extends JpaRepository<Vote, Long> {
     boolean existsByUserAndReportAndLikedTrue(User user, GarbageReport report);
 
     /**
+     * Which of the given reports this user has already appreciated.
+     *
+     * The single-report check above costs one query per story when called
+     * from the feed mapper. This asks the same question for a whole page in
+     * one query: whatever comes back is the set of reports whose heart is
+     * filled for this reader, and anything absent is not.
+     *
+     * Only used when someone is signed in - an anonymous reader owns no
+     * likes, so the caller skips the query entirely rather than asking about
+     * a null user.
+     */
+    List<Vote> findByUserAndReportInAndLikedTrue(User user, List<GarbageReport> reports);
+
+    /**
      * Withdraws every like on a report while keeping the ratings.
      *
      * Used when a cleanup is deleted but the report itself remains: the

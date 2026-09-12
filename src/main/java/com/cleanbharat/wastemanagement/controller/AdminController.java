@@ -1,6 +1,7 @@
 package com.cleanbharat.wastemanagement.controller;
 
 import com.cleanbharat.wastemanagement.dto.ReportResponse;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 import com.cleanbharat.wastemanagement.enums.ReportStatus;
 import com.cleanbharat.wastemanagement.service.AdminService;
 import com.cleanbharat.wastemanagement.dto.SuccessResponse;
@@ -11,8 +12,6 @@ import com.cleanbharat.wastemanagement.enums.Role;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 /**
  * REST APIs used by the
@@ -31,25 +30,41 @@ public class AdminController {
      * Search reports using title, city, state or pincode.
 
      * Example:
-     * /api/admin/reports/search?keyword=patna
+     * /api/admin/reports/search?keyword=patna&page=0&size=10
      */
     @GetMapping("/reports/search")
-    public ResponseEntity<List<ReportResponse>> searchReports(@RequestParam String keyword) {
-        return ResponseEntity.ok(adminService.searchReports(keyword));
+    public ResponseEntity<PageResponse<ReportResponse>> searchReports(
+            @RequestParam String keyword,
+
+            @RequestParam(defaultValue = "0")
+            int page,
+
+            @RequestParam(defaultValue = "10")
+            int size,
+
+            @RequestParam(required = false)
+            String sortBy,
+
+            @RequestParam(required = false)
+            String direction
+    ) {
+        return ResponseEntity.ok(
+                adminService.searchReports(keyword, page, size, sortBy, direction)
+        );
     }
 
 
     /**
      * Filter reports.
-     * Every parameter is optional.
+     * Every filter parameter is optional.
 
      * Examples:
      * /api/admin/reports/filter?status=PENDING
      * /api/admin/reports/filter?city=Patna
-     * /api/admin/reports/filter?status=RESOLVED&city=Gaya
+     * /api/admin/reports/filter?status=RESOLVED&city=Gaya&page=1&size=25
      */
     @GetMapping("/reports/filter")
-    public ResponseEntity<List<ReportResponse>> filterReports(
+    public ResponseEntity<PageResponse<ReportResponse>> filterReports(
             @RequestParam(required = false)
             ReportStatus status,
 
@@ -57,9 +72,31 @@ public class AdminController {
             String city,
 
             @RequestParam(required = false)
-            String state
+            String state,
+
+            @RequestParam(defaultValue = "0")
+            int page,
+
+            @RequestParam(defaultValue = "10")
+            int size,
+
+            @RequestParam(required = false)
+            String sortBy,
+
+            @RequestParam(required = false)
+            String direction
     ) {
-        return ResponseEntity.ok(adminService.filterReports(status, city, state));
+        return ResponseEntity.ok(
+                adminService.filterReports(
+                        status,
+                        city,
+                        state,
+                        page,
+                        size,
+                        sortBy,
+                        direction
+                )
+        );
     }
 
     /**
@@ -89,22 +126,32 @@ public class AdminController {
     }
 
     /**
-     * Returns every registered user.
+     * Returns one page of registered users.
 
      * Optional role filter:
      * /api/admin/users
      * /api/admin/users?role=ROLE_CLEANER
+     * /api/admin/users?role=ROLE_CITIZEN&page=1&size=25
      */
     @GetMapping("/users")
-    public ResponseEntity<List<UserSummaryResponse>> getUsers(
-            @RequestParam(required = false) Role role
+    public ResponseEntity<PageResponse<UserSummaryResponse>> getUsers(
+            @RequestParam(required = false) Role role,
+
+            @RequestParam(defaultValue = "0")
+            int page,
+
+            @RequestParam(defaultValue = "10")
+            int size,
+
+            @RequestParam(required = false)
+            String sortBy,
+
+            @RequestParam(required = false)
+            String direction
     ){
-
-        if (role == null) {
-            return ResponseEntity.ok(adminService.getAllUsers());
-        }
-
-        return ResponseEntity.ok(adminService.getUsersByRole(role));
+        return ResponseEntity.ok(
+                adminService.getUsers(role, page, size, sortBy, direction)
+        );
     }
 
     /**
@@ -112,12 +159,31 @@ public class AdminController {
      * Optional role filter.
      */
     @GetMapping("/users/search")
-    public ResponseEntity<List<UserSummaryResponse>> searchUsers(
+    public ResponseEntity<PageResponse<UserSummaryResponse>> searchUsers(
             @RequestParam String keyword,
-            @RequestParam(required = false) Role role
+            @RequestParam(required = false) Role role,
+
+            @RequestParam(defaultValue = "0")
+            int page,
+
+            @RequestParam(defaultValue = "10")
+            int size,
+
+            @RequestParam(required = false)
+            String sortBy,
+
+            @RequestParam(required = false)
+            String direction
     ) {
         return ResponseEntity.ok(
-                adminService.searchUsers(keyword, role)
+                adminService.searchUsers(
+                        keyword,
+                        role,
+                        page,
+                        size,
+                        sortBy,
+                        direction
+                )
         );
     }
 

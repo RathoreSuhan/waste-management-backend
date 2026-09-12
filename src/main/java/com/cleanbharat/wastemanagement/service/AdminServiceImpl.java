@@ -18,17 +18,22 @@ import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.dto.SuccessResponse;
 import com.cleanbharat.wastemanagement.exception.RolePromotionNotAllowedException;
 import com.cleanbharat.wastemanagement.dto.ReportResponse;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.mapper.ReportMapper;
 import com.cleanbharat.wastemanagement.service.deletion.ReportDeletionService;
 import java.time.LocalDateTime;
 import com.cleanbharat.wastemanagement.exception.UserDeletionNotAllowedException;
 import com.cleanbharat.wastemanagement.service.deletion.UserDeletionService;
+import com.cleanbharat.wastemanagement.util.PaginationUtil;
 
 import java.util.List;
+import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +44,21 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class AdminServiceImpl implements AdminService {
+
+    /*
+      Fields either admin register may be ordered by.
+
+      Both lists arrive as request parameters that end up in an ORDER BY
+      clause, so they may only ever be one of these literal strings. The
+      account register defaults to newest first; the report register has
+      the same default, with engagement offered as the alternative the
+      trending view ranks by.
+    */
+    private static final Set<String> USER_SORT_PROPERTIES =
+            Set.of("createdAt", "name", "rewardPoints");
+
+    private static final Set<String> REPORT_SORT_PROPERTIES =
+            Set.of("createdAt", "engagementScore");
 
     // User repository
     private final UserRepository userRepository;
@@ -144,56 +164,70 @@ public class AdminServiceImpl implements AdminService {
     }
 
     @Override
-    public List<UserSummaryResponse> getAllUsers() {
+    public PageResponse<UserSummaryResponse> getUsers(
+            Role role,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    ) {
 
-        // Fetch every user from database
-        List<User> users = userRepository.findAll();
+        // Newest account first, unless a whitelisted field is asked for
+        Pageable pageable = PaginationUtil.resolve(
+                page,
+                size,
+                PaginationUtil.resolveSort(
+                        sortBy,
+                        direction,
+                        USER_SORT_PROPERTIES,
+                        "createdAt"
+                )
+        );
 
-        // Convert entities into DTOs
-        return users.stream()
-                .map(this::mapToUserSummaryResponse)
-                .toList();
+        Page<User> users = role == null
+                ? userRepository.findAllBy(pageable)
+                : userRepository.findByRole(role, pageable);
+
+        return PageResponse.from(users, this::mapToUserSummaryResponse);
     }
 
     @Override
-    public List<UserSummaryResponse> getUsersByRole(Role role) {
+    public PageResponse<UserSummaryResponse> searchUsers(
+            String keyword,
+            Role role,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    ) {
 
-        // Fetch users belonging to the given role
-        List<User> users = userRepository.findByRole(role);
+        Pageable pageable = PaginationUtil.resolve(
+                page,
+                size,
+                PaginationUtil.resolveSort(
+                        sortBy,
+                        direction,
+                        USER_SORT_PROPERTIES,
+                        "createdAt"
+                )
+        );
 
-        // Convert entities into DTOs
-        return users.stream()
-                .map(this::mapToUserSummaryResponse)
-                .toList();
-    }
+        // Search across every role, or within the selected one
+        Page<User> users = role == null
+                ? userRepository.findByNameContainingIgnoreCaseOrEmailContainingIgnoreCase(
+                        keyword,
+                        keyword,
+                        pageable
+                )
+                : userRepository.findByRoleAndNameContainingIgnoreCaseOrRoleAndEmailContainingIgnoreCase(
+                        role,
+                        keyword,
+                        role,
+                        keyword,
+                        pageable
+                );
 
-    @Override
-    public List<UserSummaryResponse> searchUsers(String keyword, Role role) {
-        List<User> users;
-
-        // Search across every role
-        if (role == null) {
-            users = userRepository
-                    .findByNameContainingIgnoreCaseOrEmailContainingIgnoreCase(
-                            keyword,
-                            keyword
-                    );
-        }
-
-        // Search only within selected role
-        else {
-            users = userRepository
-                    .findByRoleAndNameContainingIgnoreCaseOrRoleAndEmailContainingIgnoreCase(
-                            role,
-                            keyword,
-                            role,
-                            keyword
-                    );
-        }
-
-        return users.stream()
-                .map(this::mapToUserSummaryResponse)
-                .toList();
+        return PageResponse.from(users, this::mapToUserSummaryResponse);
     }
 
     @Override
@@ -288,36 +322,66 @@ public class AdminServiceImpl implements AdminService {
     }
 
     @Override
-    public List<ReportResponse> searchReports(String keyword) {
+    public PageResponse<ReportResponse> searchReports(
+            String keyword,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    ) {
+
+        Pageable pageable = PaginationUtil.resolve(
+                page,
+                size,
+                PaginationUtil.resolveSort(
+                        sortBy,
+                        direction,
+                        REPORT_SORT_PROPERTIES,
+                        "createdAt"
+                )
+        );
 
         // Search reports using keyword
-        List<GarbageReport> reports = garbageReportRepository.searchReports(keyword);
+        Page<GarbageReport> reports =
+                garbageReportRepository.searchReportsPaged(keyword, pageable);
 
         // Entity -> DTO
-        return reports.stream()
-                .map(reportMapper::toResponse)
-                .toList();
+        return PageResponse.from(reports, reportMapper::toResponse);
     }
 
     @Override
-    public List<ReportResponse> filterReports(
+    public PageResponse<ReportResponse> filterReports(
             ReportStatus status,
             String city,
-            String state
+            String state,
+            int page,
+            int size,
+            String sortBy,
+            String direction
     ) {
 
+        Pageable pageable = PaginationUtil.resolve(
+                page,
+                size,
+                PaginationUtil.resolveSort(
+                        sortBy,
+                        direction,
+                        REPORT_SORT_PROPERTIES,
+                        "createdAt"
+                )
+        );
+
         // Filter reports using optional parameters
-        List<GarbageReport> reports =
-                garbageReportRepository.filterReports(
+        Page<GarbageReport> reports =
+                garbageReportRepository.filterReportsPaged(
                         status,
                         city,
-                        state
+                        state,
+                        pageable
                 );
 
         // Entity -> DTO
-        return reports.stream()
-                .map(reportMapper::toResponse)
-                .toList();
+        return PageResponse.from(reports, reportMapper::toResponse);
     }
 
     @Override

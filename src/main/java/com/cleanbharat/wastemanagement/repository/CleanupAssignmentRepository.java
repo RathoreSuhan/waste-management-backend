@@ -5,6 +5,8 @@ import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -52,6 +54,45 @@ public interface CleanupAssignmentRepository extends JpaRepository<CleanupAssign
         ORDER BY a.completedAt DESC
         """)
     List<CleanupAssignment> findCompletedVerifiedAssignments();
+
+
+    /**
+     * One page of the Public Feed, newest completed cleanup first.
+     *
+     * The three JOIN FETCHes stay: a feed card shows the report's pictures and
+     * address, the cleaner's name and the corporation that signed the work
+     * off, and every one of those is a lazy association. Fetching them here
+     * keeps a page of ten to one query instead of one plus thirty.
+     *
+     * The ORDER BY also stays in the query rather than moving to the pageable,
+     * because it carries NULLS LAST. A legacy COMPLETED row without a
+     * completedAt would otherwise sort to the top under a plain descending
+     * sort, putting a dateless record above today's cleanups. A pageable
+     * cannot express NULLS LAST, which is why the pageable passed in below
+     * carries no sort of its own.
+     *
+     * countQuery is written out because Spring cannot derive a count from a
+     * query with a FETCH JOIN.
+     */
+    @Query(
+            value = """
+                SELECT a
+                FROM CleanupAssignment a
+                JOIN FETCH a.report r
+                JOIN FETCH a.cleaner c
+                JOIN FETCH a.assignedMunicipalCorporation mc
+                WHERE a.status = com.cleanbharat.wastemanagement.enums.AssignmentStatus.COMPLETED
+                  AND a.aiVerified = true
+                ORDER BY a.completedAt DESC NULLS LAST, a.id DESC
+                """,
+            countQuery = """
+                SELECT COUNT(a)
+                FROM CleanupAssignment a
+                WHERE a.status = com.cleanbharat.wastemanagement.enums.AssignmentStatus.COMPLETED
+                  AND a.aiVerified = true
+                """
+    )
+    Page<CleanupAssignment> findCompletedVerifiedAssignmentsPaged(Pageable pageable);
 
 
     // Fetch a completed and AI-verified cleanup assignment by report ID

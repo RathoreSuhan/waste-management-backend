@@ -2,6 +2,8 @@ package com.cleanbharat.wastemanagement.repository;
 
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.Role;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -88,5 +90,43 @@ public interface UserRepository extends JpaRepository<User, Long> {
             String name,
             Role roleAgain,
             String email
+    );
+
+
+    /*
+      ========================================================================
+      Paged reads
+      ========================================================================
+
+      The admin user list is the one screen that genuinely grows without
+      bound - every registration adds a row - so it is the one that most
+      needs paging rather than a full download.
+
+      These are derived queries, so Spring writes the count query itself and
+      the pageable supplies the ORDER BY. The "property + Pageable" overloads
+      sit alongside the plain ones rather than replacing them: the plain
+      versions are still what the shorter internal lookups use.
+    */
+
+    // One page of every registered user
+    Page<User> findAllBy(Pageable pageable);
+
+    // One page of users in a given role
+    Page<User> findByRole(Role role, Pageable pageable);
+
+    // One page of name/email matches across every role
+    Page<User> findByNameContainingIgnoreCaseOrEmailContainingIgnoreCase(
+            String name,
+            String email,
+            Pageable pageable
+    );
+
+    // One page of name/email matches within a single role
+    Page<User> findByRoleAndNameContainingIgnoreCaseOrRoleAndEmailContainingIgnoreCase(
+            Role role,
+            String name,
+            Role roleAgain,
+            String email,
+            Pageable pageable
     );
 }

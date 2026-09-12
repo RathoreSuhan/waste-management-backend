@@ -2,6 +2,7 @@ package com.cleanbharat.wastemanagement.controller;
 
 import com.cleanbharat.wastemanagement.dto.LikeResponse;
 import com.cleanbharat.wastemanagement.dto.PublicFeedResponse;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 
 import com.cleanbharat.wastemanagement.service.PublicFeedService;
 import lombok.RequiredArgsConstructor;
@@ -9,7 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.cleanbharat.wastemanagement.dto.SuccessResponse;
 import java.time.LocalDateTime;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/public-feed")
@@ -20,11 +20,19 @@ public class PublicFeedController {
     private final PublicFeedService publicFeedService;
 
     /**
-     * Returns all completed AI-verified cleanups.
+     * Returns one page of completed AI-verified cleanups.
      */
     @GetMapping
-    public ResponseEntity<List<PublicFeedResponse>> getPublicFeed() {
-        List<PublicFeedResponse> response = publicFeedService.getPublicFeed();
+    public ResponseEntity<PageResponse<PublicFeedResponse>> getPublicFeed(
+            @RequestParam(defaultValue = "0")
+            int page,
+
+            @RequestParam(defaultValue = "10")
+            int size
+    ) {
+        PageResponse<PublicFeedResponse> response =
+                publicFeedService.getPublicFeed(page, size);
+
         return ResponseEntity.ok(response);
     }
 

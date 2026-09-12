@@ -4,11 +4,10 @@ import com.cleanbharat.wastemanagement.dto.admin.DashboardResponse;
 import com.cleanbharat.wastemanagement.dto.admin.UserDetailsResponse;
 import com.cleanbharat.wastemanagement.dto.admin.UserSummaryResponse;
 import com.cleanbharat.wastemanagement.dto.ReportResponse;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 import com.cleanbharat.wastemanagement.enums.ReportStatus;
 import com.cleanbharat.wastemanagement.dto.SuccessResponse;
 import com.cleanbharat.wastemanagement.enums.Role;
-
-import java.util.List;
 
 /**
  * Service responsible for all
@@ -25,21 +24,42 @@ public interface AdminService {
      */
     DashboardResponse getDashboard();
 
-    /**
-     * Returns all users.
-     */
-    List<UserSummaryResponse> getAllUsers();
+    /*
+      ========================================================================
+      Paged registers
+      ========================================================================
+
+      Both admin registers - accounts and reports - grow with the platform
+      and used to be returned whole. They are now one page at a time.
+
+      Pagination parameters follow the same convention on every one of them:
+      zero-based `page`, clamped `size`, whitelisted `sortBy` and
+      `direction`, and a `PageResponse` wrapper carrying the totals.
+    */
 
     /**
-     * Returns users filtered by a specific role.
+     * One page of every registered user, optionally narrowed to one role.
      */
-    List<UserSummaryResponse> getUsersByRole(Role role);
+    PageResponse<UserSummaryResponse> getUsers(
+            Role role,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    );
 
     /**
-     * Searches users by name or email.
-     * If role is provided, search is limited to that role.
+     * One page of users matching a name or email fragment, optionally
+     * within one role.
      */
-    List<UserSummaryResponse> searchUsers(String keyword, Role role);
+    PageResponse<UserSummaryResponse> searchUsers(
+            String keyword,
+            Role role,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    );
 
     /**
      * Returns detailed information about a single user.
@@ -58,17 +78,29 @@ public interface AdminService {
     SuccessResponse promoteCitizenToAdmin(Long userId);
 
     /**
-     * Searches reports using title, city, state or pincode.
+     * One page of reports matching a keyword against title, city, state
+     * or pincode.
      */
-    List<ReportResponse> searchReports(String keyword);
+    PageResponse<ReportResponse> searchReports(
+            String keyword,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    );
 
     /**
-     * Filters reports.
+     * One page of reports matching any combination of status, city and
+     * state.
      */
-    List<ReportResponse> filterReports(
+    PageResponse<ReportResponse> filterReports(
             ReportStatus status,
             String city,
-            String state
+            String state,
+            int page,
+            int size,
+            String sortBy,
+            String direction
     );
 
     /**

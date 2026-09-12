@@ -1,7 +1,9 @@
 package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.CreateReportRequest;
+import com.cleanbharat.wastemanagement.dto.MyReportSummaryResponse;
 import com.cleanbharat.wastemanagement.dto.ReportResponse;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.ReportStatus;
@@ -12,6 +14,7 @@ import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.mapper.ReportMapper;
 import com.cleanbharat.wastemanagement.util.LocationUtil;
+import com.cleanbharat.wastemanagement.util.PaginationUtil;
 import com.cleanbharat.wastemanagement.dto.ai.AIReportValidationResponse;
 import com.cleanbharat.wastemanagement.service.ai.AIReportValidationService;
 import com.cleanbharat.wastemanagement.service.location.ReportDuplicateValidationService;
@@ -19,17 +22,33 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
+import java.util.Set;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor // constructor injection
 public class ReportServiceImpl implements ReportService {
+
+    /*
+      Properties a caller is allowed to order the report register by.
+
+      A whitelist rather than a free-form field name: the value arrives as a
+      request parameter and ends up in an ORDER BY clause, so it may only
+      ever be one of these literal strings. "engagementScore" is here
+      because the trending register ranks by it; "createdAt" is the
+      register's default.
+    */
+    private static final Set<String> REPORT_SORT_PROPERTIES =
+            Set.of("createdAt", "engagementScore");
 
     private final GarbageReportRepository reportRepository; // report repo
     private final UserRepository userRepository; // user repo
@@ -214,11 +233,63 @@ public class ReportServiceImpl implements ReportService {
     }
 
     @Override
-    public List<ReportResponse> getAllReports() {
-        return reportRepository.findAll()
-                .stream()
-                .map(reportMapper::toResponse) // entity -> dto
-                .toList();
+    public PageResponse<ReportResponse> getAllReports(
+            int page,
+            int size,
+            String sortBy,
+            String direction,
+            String keyword,
+            ReportStatus status
+    ) {
+
+        // Newest first unless the caller asks for a whitelisted alternative
+        Sort sort = PaginationUtil.resolveSort(
+                sortBy,
+                direction,
+                REPORT_SORT_PROPERTIES,
+                "createdAt"
+        );
+
+        Pageable pageable = PaginationUtil.resolve(page, size, sort);
+
+        /*
+          Two filters, one query each.
+
+          A keyword searches across four fields at once, which is a
+          different WHERE clause from a status filter, and both differ from
+          the unfiltered register. Rather than one query with every
+          combination and a row of null checks, the register picks the
+          query that matches what was asked for. A keyword takes precedence
+          when both are present, because the search already spans every
+          status.
+        */
+        Page<GarbageReport> reports;
+
+        if (keyword != null && !keyword.isBlank()) {
+
+            reports = reportRepository.searchReportsPaged(
+                    keyword.trim(),
+                    pageable
+            );
+
+        } else if (status != null) {
+
+            reports = reportRepository.filterReportsPaged(
+                    status,
+                    null,
+                    null,
+                    pageable
+            );
+
+        } else {
+
+            // No filters - the whole register, one page at a time.
+            // findAllBy rather than findAll so the reporter is joined in
+            // and a page does not cost an extra query per row.
+            reports = reportRepository.findAllBy(pageable);
+        }
+
+        return PageResponse.from(reports, reportMapper::toResponse);
     }
 
     @Override
@@ -231,16 +302,88 @@ public class ReportServiceImpl implements ReportService {
     }
 
     @Override
-    public List<ReportResponse> getMyReports() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication(); // logged user
+    public PageResponse<ReportResponse> getMyReports(
+            int page,
+            int size,
+            ReportStatus status
+    ) {
+
+        User user = currentUser();
+
+        /*
+          Newest first, and the id breaks the tie.
+
+          Two reports filed in the same second would otherwise have no
+          defined order, and a row could then appear on two pages while
+          another was skipped entirely.
+        */
+        Pageable pageable = PaginationUtil.resolve(
+                page,
+                size,
+                Sort.by(Sort.Direction.DESC, "createdAt")
+                        .and(Sort.by(Sort.Direction.DESC, "id"))
+        );
+
+        Page<GarbageReport> reports = status == null
+                ? reportRepository.findByUser(user, pageable)
+                : reportRepository.findByUserAndStatus(user, status, pageable);
+
+        return PageResponse.from(reports, reportMapper::toResponse);
+    }
+
+    @Override
+    public MyReportSummaryResponse getMyReportsSummary() {
+
+        User user = currentUser();
+
+        /*
+          One grouped query, read into one number per status.
+
+          Three counts could be three queries, but the database can group
+          them into a single pass. A status the citizen has never used is
+          absent from the result rather than present as zero, so every
+          lookup defaults to zero.
+        */
+        long total = 0;
+        long pending = 0;
+        long inProgress = 0;
+        long resolved = 0;
+
+        for (GarbageReportRepository.StatusCount row
+                : reportRepository.countByUserGroupedByStatus(user)) {
+
+            total += row.getTotal();
+
+            switch (row.getStatus()) {
+                case PENDING -> pending = row.getTotal();
+                case IN_PROGRESS -> inProgress = row.getTotal();
+                case RESOLVED -> resolved = row.getTotal();
+            }
+        }
+
+        return MyReportSummaryResponse.builder()
+                .total(total)
+                .pending(pending)
+                .inProgress(inProgress)
+                .resolved(resolved)
+                .build();
+    }
+
+    /**
+     * The signed-in citizen behind the current request.
+     *
+     * Both /my endpoints resolve the same user the same way - from the
+     * token, never from a parameter - so the lookup lives here rather than
+     * being repeated and risking one copy drifting.
+     */
+    private User currentUser() {
+
+        Authentication authentication =
+                SecurityContextHolder.getContext().getAuthentication(); // logged user
+
         String email = authentication.getName(); // email
 
-        User user = userRepository.findByEmail(email)
+        return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        return reportRepository.findByUser(user)
-                .stream()
-                .map(reportMapper::toResponse) // entity -> dto
-                .toList();
     }
 }
