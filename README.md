@@ -322,6 +322,7 @@ Publish to Public Feed
 | PostgreSQL | Relational Database |
 | Redis | In-Memory Cache for Dashboards & Leaderboards |
 | Spring Data Redis + Spring Cache | Declarative Caching (`@Cacheable` / `@CacheEvict`) with Lettuce client |
+| Redis + Lua | Distributed API Rate Limiting (atomic fixed-window counter) |
 | Apache Commons Pool2 | Redis Connection Pooling |
 | Maven | Dependency Management |
 | Lombok | Boilerplate Code Reduction |
@@ -972,6 +973,7 @@ Main Components
 
 - SecurityConfig
 - JwtAuthenticationFilter
+- RateLimitFilter
 - JwtService
 - CustomUserDetailsService
 
@@ -1006,6 +1008,10 @@ SecurityContextHolder
 
         │
 
+RateLimitFilter          ── over limit? → 429 + Retry-After (stops here)
+
+        │
+
 Controller
 ```
 
@@ -1016,6 +1022,7 @@ Security Features
 - JWT Expiration
 - Role-Based Access
 - Endpoint Protection
+- Distributed API Rate Limiting
 - Global Exception Handling
 
 ---
@@ -1202,6 +1209,67 @@ approve completion → evicts homepage + leaderboard + admin + municipal
 - Connection comes from a single environment variable (`SPRING_DATA_REDIS_URL`, `redis://` or `rediss://` for TLS) using the default Lettuce client + Commons Pool2 — no credentials in `application.properties`.
 - Covered by `RedisCacheSerializationTest` (DTO round-trip + municipal SpEL key isolation). `PlatformImpactResponse` uses the same Jackson-safe shape (`@NoArgsConstructor` + `@AllArgsConstructor`) so a cache HIT always deserializes.
 - Full interview-ready walkthrough with side-by-side code commentary: `Clean_Bharat_Redis_Caching_Revision_Notes.pdf` in the repository root.
+
+---
+
+# 🚦 API Rate Limiting
+
+The same Redis instance also backs **distributed API rate limiting**, so one caller cannot flood the API or burn the paid Gemini / Cloudinary quota. The counter lives in Redis rather than in process memory, which means the limit is shared across **every application instance** — scaling to two containers does not silently double every allowance.
+
+```text
+Incoming Request
+  │
+  ▼
+JwtAuthenticationFilter        → SecurityContext populated (when a valid JWT is present)
+  │
+  ▼
+RateLimitFilter                → tier resolved from HTTP method + decoded path
+  │                              identity = authenticated principal, else client IP
+  │
+  ├──► OVER LIMIT → 429 + Retry-After, request stops here
+  │
+  ▼  under limit → INCR in Redis, chain continues
+Authorization → Controller → Service (Gemini / Cloudinary / PostgreSQL)
+```
+
+Placement is the whole design: the filter sits **after** `JwtAuthenticationFilter` so a signed-in caller is counted by principal instead of sharing an IP bucket, and **before** authorization, so an over-limit request is rejected while it is still cheap — no controller, no AI call, no upload.
+
+## Tiers
+
+| Scope | Limit / min | Routes | Counted by |
+|-------|-------------|--------|------------|
+| `auth` | 10 | `/api/auth/**`, `/api/account/password` | IP — no principal exists yet on a credential path |
+| `ai` | 5 | `POST /api/reports`, `POST /api/files/upload`, cleanup proof upload, activity logs, cleanup proposals, `/test/**` (Gemini probe) | principal (IP for the anonymous upload route) |
+| `community` | 30 | non-`GET` on `/api/votes`, `/api/comments/**`, `/api/public-feed/**` | principal |
+| `staff` | 60 | `/api/admin/**`, `/api/municipal-corporations`, `/api/cleanup-approvals/**` | principal |
+| `pub` | 100 | fall-through — the public read surface (reports, feed, leaderboard, platform-impact) | IP |
+
+`GET /api/health` (the cold-start ping the frontend polls while the free-plan container wakes), anything under `/actuator`, and every `OPTIONS` pre-flight are **exempt**. The whole policy lives in one `resolve(method, path)` method in `config/RateLimitProperties.java` — no rate-limit logic is scattered across controllers.
+
+## Key & Window
+
+```text
+rl:{scope}:{sha256_16(identity)}:{window}
+ │   │       │                     └── floor(epochSeconds / 60) — the key itself rotates
+ │   │       └── first 16 hex of SHA-256, so no email is ever written to Redis in clear text
+ │   └── auth | ai | community | staff | pub
+ └── dedicated namespace — cannot collide with a `cacheName::key` cache entry
+```
+
+Counting is a single **atomic Lua script**: `INCR`, `EXPIRE` only when the counter reads `1`, then `TTL` in the same reply. Doing it as separate commands would leave a window where a crash between `INCR` and `EXPIRE` strands a key with no TTL — a caller locked out forever. Refreshing the TTL on every hit instead of only the first would turn a one-minute limit into a rolling lockout.
+
+The expiry sent to Redis is the **seconds remaining in the current window**, not a full window, because the key rotates on absolute clock boundaries. A bucket first touched at `:55` of a 60-second window resets 5 seconds later, not 60 — so `Retry-After` is exact, and expired buckets disappear on their own with no cleanup job and no unbounded growth.
+
+## Configuration Notes
+
+- Registered once via `.addFilterAfter(rateLimitFilter, JwtAuthenticationFilter.class)` in `config/SecurityConfig.java`. A `FilterRegistrationBean` with `setEnabled(false)` suppresses Boot's auto-registration of the `@Component` filter, which would otherwise run it twice per request.
+- Reuses the auto-configured `StringRedisTemplate` on the **same** `RedisConnectionFactory` as the cache — one connection to Redis, and cache TTL / eviction behaviour is untouched.
+- The `429` is written directly by the filter using the project's existing `ErrorResponse` DTO. `@RestControllerAdvice` cannot shape a response produced inside a servlet filter, so routing it through `GlobalExceptionHandler` for symmetry would simply not work. `Retry-After` is CORS-exposed so the browser can read it.
+- **Fails open.** If Redis is briefly unreachable the request is allowed rather than rejected — a limiter that takes the whole API down with it would be a bigger outage than the abuse it prevents.
+- Anonymous callers are keyed by the client IP taken from `X-Forwarded-For` **counted from the right**, because the platform proxy appends the peer it actually observed; entries further left are caller-supplied and can say anything. `ratelimit.trusted-proxy-hops=0` ignores the header entirely for direct or local runs.
+- Every number is a `@Value` tunable with an in-code default (`ratelimit.enabled`, `.window-seconds`, `.public-per-minute`, `.auth-per-minute`, `.expensive-per-minute`, `.community-per-minute`, `.staff-per-minute`, `.trusted-proxy-hops`), so the application runs unchanged with no new configuration and any limit can be retuned per environment.
+- Covered by **37 unit tests** — `RateLimitServiceTest` (key shape, identity hashing, window-boundary expiry, fail-open) and `RateLimitFilterTest` (tier resolution, principal-vs-IP identity, proxy handling, 429 shape, single execution per request).
+- Full interview-ready walkthrough with side-by-side code commentary and a five-request data trace: `Clean_Bharat_Rate_Limiting_Revision_Notes.pdf` in the repository root.
 
 ---
 
@@ -1762,6 +1830,7 @@ Several optimizations were implemented across the backend, including:
 - Efficient aggregate repository queries
 - Centralized business logic reuse
 - **Redis caching for read-heavy aggregates** — homepage impact stats, leaderboards, and both dashboards are served from Redis (~2 ms) instead of repeated `COUNT` / `AVG` queries against PostgreSQL (~250 ms). See **⚡ Redis Caching Architecture** below.
+- **Redis-backed rate limiting rejects abuse before it costs anything** — an over-limit request is stopped in the security filter, so no Gemini call, Cloudinary upload, or database query is ever made for it. See **🚦 API Rate Limiting** below.
 
 ---
 
@@ -1793,14 +1862,14 @@ src
     ├── java
     │   └── com.cleanbharat.wastemanagement
     │       ├── client                # External API clients (Gemini AI)
-    │       ├── config                # Security, Cloudinary, AI & Redis cache configuration
+    │       ├── config                # Security, Cloudinary, AI, Redis cache & rate-limit policy
     │       ├── controller            # REST Controllers
     │       ├── dto                   # Request & Response DTOs
     │       ├── entity                # JPA Entities
     │       ├── enums                 # Application Enums
     │       ├── exception             # Global & Custom Exceptions
     │       ├── repository            # Spring Data JPA Repositories
-    │       ├── security              # JWT & Spring Security
+    │       ├── security              # JWT, Spring Security & rate-limit filter
     │       ├── service               # Business Logic
     │       ├── util                  # Helper Utilities
     │       └── WasteManagementApplication.java
@@ -1908,6 +1977,17 @@ app.duplicate.max-age-days=30
 
 # Example: SPRING_DATA_REDIS_URL=redis://default:<password>@<host>:<port>
 # (or rediss://... for TLS). Spring Boot auto-configures Lettuce from this URL.
+
+# API Rate Limiting (all optional — these are the in-code defaults, shown for tuning)
+
+ratelimit.enabled=true
+ratelimit.window-seconds=60
+ratelimit.public-per-minute=100
+ratelimit.auth-per-minute=10
+ratelimit.expensive-per-minute=5
+ratelimit.community-per-minute=30
+ratelimit.staff-per-minute=60
+ratelimit.trusted-proxy-hops=1
 ```
 
 > **Note:** Never commit API keys, secrets, or credentials to a public repository. Use environment variables or external configuration in production deployments.
@@ -2019,6 +2099,8 @@ The backend exposes RESTful APIs organized by functional modules.
 
 The APIs follow REST principles and consistently return structured JSON responses with proper HTTP status codes.
 
+Every endpoint is additionally subject to **Redis-backed rate limiting** in the security filter chain: exceeding a tier's per-minute allowance returns `429 Too Many Requests` with a `Retry-After` header, in the same JSON error shape as every other failure. See **🚦 API Rate Limiting**.
+
 ---
 
 # 🧪 Testing
@@ -2082,6 +2164,17 @@ The municipal cleanup workflow is covered end to end, including:
 - A cleanup reaches the public feed only after official completion
 - Existing Citizen, Cleaner, and Admin permissions continue to work
 
+Rate limiting is covered by **37 dedicated tests**, which assert that:
+
+- Anonymous callers are keyed by IP and authenticated callers by their principal
+- Client-supplied identifiers are ignored, and `X-Forwarded-For` is read from the trusted end
+- Two users, two IPs, or two tiers never share a bucket — and one account cannot earn a second bucket by changing the case of its email
+- Requests under the limit pass through; the next one returns `429` with `Retry-After`
+- Keys stay inside the dedicated `rl:` namespace and never resemble a cache key
+- The bucket expires when its window ends, not a full window later
+- A percent-encoded path cannot slip into a more generous tier
+- The filter runs exactly once per request, and a Redis outage fails **open**
+
 ---
 
 ### Integration Testing
@@ -2134,6 +2227,7 @@ Implemented features include:
 - Stateless Authentication
 - Role-Based Access Control
 - Protected Endpoints
+- Distributed API Rate Limiting (Redis-backed, per-tier `429` + `Retry-After`)
 - Global Exception Handling
 - Secure Password Storage
 - Business Rule Validation
@@ -2186,7 +2280,6 @@ Although the backend is feature-rich, several exciting enhancements are planned.
 - Docker Deployment
 - Kubernetes
 - CI/CD Pipeline
-- API Rate Limiting
 - Monitoring & Logging
 
 ---
@@ -2224,6 +2317,9 @@ Key areas explored include:
 - Transaction Management
 - Redis Caching with Spring Cache Abstraction (`@Cacheable` / `@CacheEvict`, TTL + eviction)
 - Cache consistency for multi-tenant dashboards (per-city keys, shared admin key)
+- Distributed Rate Limiting (fixed-window counters shared across instances)
+- Atomic Redis operations with Lua scripting (read-modify-write without a race)
+- Servlet Filter Chain Design (why a filter, not `@RestControllerAdvice`, owns the `429`)
 - Clean Code Principles
 - Scalable Backend Design
 - Unit Testing with JUnit 5
