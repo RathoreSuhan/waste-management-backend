@@ -173,8 +173,29 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<configuration>
-					<argLine>-XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
+					<!-- @{argLine} late-binding preserves the JaCoCo coverage agent injected by prepare-agent; without it the static argLine would override the agent and produce empty coverage -->
+					<argLine>@{argLine} -XX:+EnableDynamicAgentLoading -Xshare:off</argLine>
 				</configuration>
+			</plugin>
+			<!-- JaCoCo Code Coverage Analysis: prepare-agent injects the agent during tests, and the report goal bound to verify generates target/site/jacoco/index.html via 'mvn clean verify' -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.13</version>
+				<executions>
+					<execution>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>generate-coverage-report</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
