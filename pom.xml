@@ -50,6 +50,26 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
+		<!-- ============================================================
+		     EMAIL VERIFICATION
+		     ============================================================
+		     Sends the six-digit code that proves a person owns the address
+		     they typed on the sign-up form.
+
+		     Why this and not an API call to the provider: there is no way to
+		     ask Google, Yahoo or Microsoft whether an address exists - those
+		     lookups were removed because they let anyone enumerate accounts.
+		     Delivering a code to the mailbox is the only check that works for
+		     every provider, including college and workplace domains.
+
+		     Version is managed by spring-boot-starter-parent, so there is
+		     nothing to pin here.
+		     ============================================================ -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
@@ -97,6 +117,33 @@
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>
 			<artifactId>spring-cloud-starter-openfeign</artifactId>
+		</dependency>
+
+		<!-- ============================================================
+		     GOOGLE SIGN-IN: ID TOKEN VERIFICATION
+		     ============================================================
+		     Supplies GoogleIdTokenVerifier, which is the only thing in the
+		     application that decides whether a credential presented by the
+		     browser really was issued by Google for this project.
+
+		     Why a library rather than a few lines of jjwt:
+		     a Google ID token is signed with a key Google rotates and
+		     publishes as a JWKS document, so verifying it by hand means
+		     fetching that document, caching it for exactly as long as Google
+		     says, re-fetching when an unknown key id appears, and getting the
+		     issuer and audience comparisons right. That is roughly seventy
+		     lines of security-critical code whose failure mode is silently
+		     accepting a forged token. This handles all of it, and brings
+		     google-http-client and its Gson parser transitively.
+
+		     No client secret is involved: the browser-side flow hands over an
+		     ID token, not an authorization code, so there is nothing to
+		     exchange and nothing confidential to configure.
+		     ============================================================ -->
+		<dependency>
+			<groupId>com.google.api-client</groupId>
+			<artifactId>google-api-client</artifactId>
+			<version>2.7.0</version>
 		</dependency>
 
 		<dependency>

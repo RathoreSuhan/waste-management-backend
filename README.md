@@ -444,15 +444,45 @@ The backend is divided into multiple independent modules, each responsible for a
 
 Authentication is implemented using **Spring Security** and **JWT (JSON Web Token)**.
 
+A new self-service account can only be created with an email address somebody has **proved they can read**. There are two proofs, and they differ in nothing else — both end in the same account row and the same JWT:
+
+| Proof | How | Works for |
+|---|---|---|
+| **Emailed code** | A six-digit code is sent to the typed address and typed back | Every provider — Gmail, Yahoo, Outlook, college and workplace domains |
+| **Google Sign-In** | The address arrives inside a token Google signed, carrying `email_verified` | Google accounts only |
+
+> **Why a code and not a lookup.** There is no API that will say whether a typed Gmail, Yahoo or Outlook address exists. Those lookups were withdrawn by every major provider because they let anyone enumerate accounts, and probing a mail server directly is both blocked at that scale and treated as abuse. Delivering something to the mailbox is the only check that works everywhere — and the only one that proves *ownership* rather than mere existence.
+
+The sign-up this replaced simply took a typed address on trust.
+
 ### Features
 
-- User Registration
-- User Login
+- Email verification codes for sign-up (any provider)
+- Google Sign-In (Google Identity Services → server-side ID-token verification)
+- Automatic linking of a Google account to an existing Clean Bharat account
 - BCrypt Password Encryption
 - Stateless Authentication
 - Role-Based Authorization (RBAC)
 - JWT Token Generation & Validation
 - Protected REST APIs
+
+### Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/auth/register` | Sign up with a password. Called twice — see below |
+| `POST` | `/api/auth/google` | Verify a Google credential; sign in, link, or report that registration is still needed |
+| `POST` | `/api/auth/google/register` | Create an account from a verified Google identity plus the role/location Google cannot supply |
+| `POST` | `/api/auth/login` | Email + password sign-in |
+
+All four sit under `permitAll` in `SecurityConfig` — a visitor signing in has no token yet — and all four are in the **`auth` rate-limit tier** (10 requests/minute, keyed by IP).
+
+`/register` is one endpoint with two outcomes, because the body is the same either way:
+
+- **without** `verificationCode` → the form is validated, a code is emailed, and the answer is `verificationRequired: true`. Nothing is created. Validating first means a request that was going to be refused never costs an email.
+- **with** `verificationCode` → the form is validated *again*, the code is checked, the account is created and a JWT comes back. Re-validating matters: the first call's "this address is free" answer is minutes old by then.
+
+The code itself lives in the Redis the application already runs — hashed, under a fingerprint of the address, with a ten-minute TTL, a five-guess cap and a sixty-second resend cooldown. See `EmailVerificationService`. Nothing is parked on the server between the two calls.
 
 ### Supported Roles
 
@@ -463,39 +493,83 @@ Authentication is implemented using **Spring Security** and **JWT (JSON Web Toke
 | 🏛 Municipal Corporation | Approves proposals and signs off completed cleanups **for its own city only** |
 | 👨‍💼 Admin | Complete platform management |
 
-A Municipal Corporation is **not** a self-registered account. It is a row in the `municipal_corporations` table created by an Admin, and only the email stored on that row can sign in to the Municipal Console.
+Both sign-up routes accept **only** `ROLE_CITIZEN` and `ROLE_CLEANER`. `ROLE_ADMIN` and `ROLE_MUNICIPAL_OFFICER` are rejected with 403.
+
+A Municipal Corporation is **not** a self-registered account. It is a row in the `municipal_corporations` table created by an Admin, and only the email stored on that row can sign in to the Municipal Console. A corporation's address is also refused by both sign-up routes.
 
 > The `MUNICIPAL` cleaner type only describes the kind of cleanup crew. It never grants Municipal Console access.
 
 Authentication Flow
 
 ```text
-Client Login
-      │
-      ▼
-Username + Password
-      │
-      ▼
-Spring Security
-      │
-      ▼
-JWT Generated
-      │
-      ▼
-Client Stores JWT
-      │
-      ▼
-Authorization Header
-
-Bearer <JWT>
-
-      │
-      ▼
-JWT Filter
-      │
-      ▼
-Authenticated Request
+         Sign-up form                      Google Sign-In button
+              │                                      │
+              ▼                                      ▼
+   POST /api/auth/register                  Google ID token
+     (no code yet)                                   │
+              │                                      ▼
+              ▼                           POST /api/auth/google
+   six-digit code emailed                           │
+              │                                      ▼
+              ▼                      GoogleIdTokenVerifier
+   POST /api/auth/register             signature · iss · aud · exp
+     (+ code)                          + email_verified == true
+              │                                      │
+              ▼                                      ▼
+   code checked against Redis         sub match → sign in
+              │                        email match → link, sign in
+              │                        neither → POST /google/register
+              │                                      │
+              └──────────────┬───────────────────────┘
+                             ▼
+                    account row created
+                             │
+                             ▼
+                 Clean Bharat JWT generated
+                             │
+                             ▼
+                 Authorization: Bearer <JWT>
+                             │
+                             ▼
+                 JwtAuthenticationFilter
+                             │
+                             ▼
+                 Authenticated Request (RBAC)
 ```
+
+The token issued after Google sign-in is **the same Clean Bharat JWT** the password path issues — same subject, same expiry, same filter, same role rules. Google's own token is verified, read and discarded; it is never stored and never used to authorize an API call.
+
+### Why linking on a matching address is safe
+
+When a Google sign-in finds no `google_subject` but a verified address that matches an existing row, it links the two rather than creating a duplicate. That would be dangerous if an account could be registered to an address its owner had never seen — whoever got there first would be handed the real owner's account. Every route above proves the address before the row exists, which is what closes it.
+
+### Configuration
+
+| Variable | Required | Default | Purpose |
+|---|:---:|---|---|
+| `MAIL_USERNAME` | For password sign-up | — | SMTP account the verification codes are sent from |
+| `MAIL_PASSWORD` | For password sign-up | — | **Secret.** A Gmail app password or provider API key |
+| `MAIL_HOST` | No | `smtp.gmail.com` | SMTP host |
+| `MAIL_PORT` | No | `587` | Submission port; STARTTLS is enabled in `MailConfig` |
+| `MAIL_FROM` | No | `MAIL_USERNAME` | Gmail rejects a From it did not authenticate |
+| `GOOGLE_CLIENT_ID` | For Google sign-in | — | OAuth 2.0 **Web application** client id. Resolved as the `google.client-id` property, so the environment variable alone is enough |
+
+With `MAIL_USERNAME` unset, password sign-up is **refused** with a message naming the missing configuration — it fails closed rather than creating an account with an unproven address, and there is deliberately no "log the code instead" developer shortcut. Google sign-in is unaffected and remains available.
+
+With `GOOGLE_CLIENT_ID` unset, every Google sign-in is refused for the same reason, and the frontend simply does not render the Google button. Password sign-up is unaffected.
+
+There is **no `GOOGLE_CLIENT_SECRET`**. The browser hands over an ID token rather than an authorization code, so there is nothing to exchange and nothing confidential to configure.
+
+**Google Cloud Console** — create an OAuth 2.0 Client ID of type *Web application* and set its **Authorized JavaScript origins** to the frontend origins (the same list `SecurityConfig` allows through CORS):
+
+```
+http://localhost:5173
+https://waste-management-frontend-xi.vercel.app
+https://cleanbharat.tech
+https://www.cleanbharat.tech
+```
+
+**Authorized redirect URIs: none.** This flow has no browser redirect back to the backend.
 
 The backend remains completely **stateless**, making it suitable for scalable distributed deployments.
 
@@ -1962,6 +2036,22 @@ cloudinary.api-secret=
 # Google Gemini
 
 gemini.api.key=
+
+# Google Sign-In
+# Only the public OAuth client id. There is no client secret in this flow:
+# the browser hands the backend a signed ID token, not an authorization code.
+# Usually supplied as the GOOGLE_CLIENT_ID environment variable instead.
+
+google.client-id=
+
+# Sign-up email verification
+# SMTP account the six-digit codes are sent from. Usually supplied as the
+# MAIL_* environment variables instead; mail.password is a secret and must
+# never be committed. host and port default to smtp.gmail.com:587.
+
+mail.username=
+
+mail.password=
 
 # AI Configuration
 

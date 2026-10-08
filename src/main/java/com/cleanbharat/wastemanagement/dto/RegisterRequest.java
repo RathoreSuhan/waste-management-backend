@@ -5,6 +5,7 @@ import com.cleanbharat.wastemanagement.enums.Role;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.*;
 
@@ -15,6 +16,9 @@ import lombok.*;
  * what will be accepted, and every one of them fits the varchar(255) columns on
  * User - an over-long value is answered with a field message instead of failing
  * as a database error.
+ *
+ * Sent twice: once to request a verification code for the email address, and
+ * once with that code to actually create the account. See verificationCode.
  */
 @Getter
 @Setter
@@ -62,4 +66,20 @@ public class RegisterRequest {
     @NotBlank(message = "City is required")
     @Size(max = 100, message = "City cannot exceed 100 characters")
     private String city;
+
+    /*
+      The six-digit code emailed to the address above, on the second call only.
+
+      Absent on the first call, which is what asks for a code to be sent, so it
+      cannot be @NotBlank. @Pattern skips nulls by design, so the format is
+      still enforced whenever a value is actually supplied - which keeps a
+      malformed guess from reaching Redis at all.
+
+      The whole form is sent again with it rather than held on the server
+      between the two calls: nothing of the person's is parked anywhere, and
+      every rule is re-checked at the moment the account is created instead of
+      trusting an answer given minutes earlier.
+    */
+    @Pattern(regexp = "\\d{6}", message = "The verification code is six digits")
+    private String verificationCode;
 }

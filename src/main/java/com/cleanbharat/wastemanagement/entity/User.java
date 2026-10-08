@@ -31,6 +31,22 @@ public class User {
     @Column(nullable = false)
     private String password;            // Encrypted password will be stored
 
+    /*
+      Google's stable account identifier (the 'sub' claim), for an account that
+      signs in with Google.
+
+      'sub' rather than the email: Google treats it as the permanent id for an
+      account, while the email on it can be changed. Keying the link on email
+      would mean a renamed Google account arriving as a stranger, and a reused
+      address arriving as somebody else.
+
+      Unique, so one Google account can never be linked to two Clean Bharat
+      accounts. Nullable, because every account created before Google sign-in
+      existed still signs in with its password - see AuthService.login.
+    */
+    @Column(name = "google_subject", unique = true, length = 64)
+    private String googleSubject;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;                  // User's role

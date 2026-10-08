@@ -302,7 +302,23 @@ class RateLimitFilterTest {
     @Test
     void credentialEndpointsUseTheAuthTier() {
         assertTier("POST", "/api/auth/login", "auth", 10);
+
+        /*
+          Sign-up is a credential path twice over: it chooses a password, and it
+          sends mail. At the public rate it would be 100 messages a minute to
+          addresses of the caller's choosing, which is both an inbox flood and a
+          drained sending quota.
+        */
         assertTier("POST", "/api/auth/register", "auth", 10);
+
+        /*
+          The Google paths too: a caller who could replay credentials at the
+          public rate would get 100 verification attempts a minute, each one a
+          call out to Google's key endpoint.
+        */
+        assertTier("POST", "/api/auth/google", "auth", 10);
+        assertTier("POST", "/api/auth/google/register", "auth", 10);
+
         assertTier("PATCH", "/api/account/password", "auth", 10);
     }
 

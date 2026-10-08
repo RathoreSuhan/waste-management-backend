@@ -16,6 +16,28 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // Find user by email
     Optional<User> findByEmail(String email);
 
+    /**
+     * Looks an account up by the Google account linked to it.
+     *
+     * This is the first question asked on every Google sign-in, and the only
+     * one whose answer is certain: 'sub' is Google's permanent identifier for
+     * the account, so a match here is the same person as last time even if
+     * they have since changed the email address on it.
+     */
+    Optional<User> findByGoogleSubject(String googleSubject);
+
+    /**
+     * Looks an account up by email, ignoring case.
+     *
+     * Needed for the one-off link between a Google account and an account that
+     * already existed. Google hands back a lower-cased address, while a row
+     * created through the old sign-up form kept whatever the person typed -
+     * "Suhan@Gmail.com". findByEmail above is exact, so matching with it would
+     * miss that row and create a second account for the same person, which is
+     * precisely what the link is there to prevent.
+     */
+    Optional<User> findByEmailIgnoreCase(String email);
+
     // Check whether email already exists
     boolean existsByEmail(String email);
 
