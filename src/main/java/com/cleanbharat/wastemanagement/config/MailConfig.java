@@ -19,7 +19,7 @@ import java.util.Properties;
  *  --------------------------------------------------
  *  Spring Boot will create a JavaMailSender from spring.mail.* on its own, but
  *  it does not turn on STARTTLS, which every mainstream SMTP provider requires
- *  on port 587. Supplying that through auto-configuration means
+ *  on port 587. Supplying that through autoconfiguration means
  *  spring.mail.properties.mail.smtp.* entries in a properties file - and this
  *  project's application.properties is off limits. Reading plain MAIL_*
  *  environment variables with @Value and setting the two flags in code keeps the

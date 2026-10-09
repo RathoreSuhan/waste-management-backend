@@ -290,7 +290,7 @@ Publish to Public Feed
 
 | Module | Description |
 |---------|-------------|
-| 🔐 Authentication | Secure JWT-based authentication with role-based authorization |
+| 🔐 Authentication | Secure JWT-based authentication with role-based authorization, email-OTP verification and Google sign-in |
 | 📝 Garbage Reporting | Citizens can report garbage with images and GPS location |
 | ☁️ Cloudinary Integration | Cloud storage for garbage and cleanup images |
 | 📍 Smart Location Module | GPS coordinates, structured address, city, state, and pincode |
@@ -327,6 +327,8 @@ Publish to Public Feed
 | Maven | Dependency Management |
 | Lombok | Boilerplate Code Reduction |
 | OpenFeign | External AI API Communication |
+| Spring Boot Starter Mail | Six-digit sign-up verification codes via SMTP (Gmail STARTTLS on 587) |
+| Google API Client | Server-side Google ID-token verification for Google sign-in |
 | JUnit 5 | Unit & Integration Testing Framework |
 | Mockito | Mocking Framework for Unit Testing |
 | H2 Database | In-Memory Database for Integration Testing |
@@ -347,6 +349,7 @@ Publish to Public Feed
 | Technology | Purpose |
 |------------|----------|
 | Cloudinary | Secure Cloud Image Storage |
+| Brevo | Transactional email over HTTPS — verification-code fallback where SMTP ports are blocked |
 
 ---
 
@@ -547,14 +550,19 @@ When a Google sign-in finds no `google_subject` but a verified address that matc
 
 | Variable | Required | Default | Purpose |
 |---|:---:|---|---|
-| `MAIL_USERNAME` | For password sign-up | — | SMTP account the verification codes are sent from |
-| `MAIL_PASSWORD` | For password sign-up | — | **Secret.** A Gmail app password or provider API key |
-| `MAIL_HOST` | No | `smtp.gmail.com` | SMTP host |
-| `MAIL_PORT` | No | `587` | Submission port; STARTTLS is enabled in `MailConfig` |
-| `MAIL_FROM` | No | `MAIL_USERNAME` | Gmail rejects a From it did not authenticate |
+| `MAIL_USERNAME` | For password sign-up | — | SMTP account the verification codes are sent from (trimmed) |
+| `MAIL_PASSWORD` | For SMTP path | — | **Secret.** A Gmail app password. Spaces are stripped in `MailConfig` (Google displays it grouped) |
+| `MAIL_HOST` | No | `smtp.gmail.com` | SMTP host (trimmed) |
+| `MAIL_PORT` | No | `587` | Submission port; STARTTLS is enabled **and required** in `MailConfig` |
+| `MAIL_FROM` | No | `MAIL_USERNAME` | Gmail rejects a From it did not authenticate; also used as the Brevo sender |
+| `BREVO_API_KEY` | For production free tier | — | **Secret.** Brevo transactional-email API key. When set, codes are sent via Brevo HTTPS API (port 443) instead of SMTP |
+| `BREVO_API_URL` | No | `https://api.brevo.com/v3/smtp/email` | Brevo send endpoint override |
+| `BREVO_SENDER_NAME` | No | `Clean Bharat` | Display name used as the Brevo sender |
 | `GOOGLE_CLIENT_ID` | For Google sign-in | — | OAuth 2.0 **Web application** client id. Resolved as the `google.client-id` property, so the environment variable alone is enough |
 
 With `MAIL_USERNAME` unset, password sign-up is **refused** with a message naming the missing configuration — it fails closed rather than creating an account with an unproven address, and there is deliberately no "log the code instead" developer shortcut. Google sign-in is unaffected and remains available.
+
+**Render free tier and SMTP.** Since September 2025 Render free web services block outbound SMTP ports `25`/`465`/`587`, so Gmail SMTP always times out there even with correct `MAIL_*` values (local delivery still works, and Google sign-in is unaffected because it already uses HTTPS/443). When `BREVO_API_KEY` is set, `EmailVerificationService` sends the same code via the Brevo HTTPS API (port 443) using `RestClient` with 10-second timeouts instead of `JavaMailSender`; the Brevo sender address must be verified in the Brevo dashboard. Without the key the SMTP path is used (local development and paid instances). Send failures log the exception plus its root cause (never the address, code, or key) so Render logs distinguish a network block from bad credentials.
 
 With `GOOGLE_CLIENT_ID` unset, every Google sign-in is refused for the same reason, and the frontend simply does not render the Google button. Password sign-up is unaffected.
 
@@ -1050,6 +1058,8 @@ Main Components
 - RateLimitFilter
 - JwtService
 - CustomUserDetailsService
+- EmailVerificationService + MailConfig (OTP ownership proof)
+- GoogleIdentityService + GoogleAuthConfig (ID-token verification)
 
 Request Flow
 
@@ -1096,6 +1106,8 @@ Security Features
 - JWT Expiration
 - Role-Based Access
 - Endpoint Protection
+- Email-ownership proof (OTP code) before account creation
+- Google ID-token verification (audience-pinned, no client secret)
 - Distributed API Rate Limiting
 - Global Exception Handling
 
@@ -1920,7 +1932,7 @@ Custom exceptions are used for business-specific scenarios, improving API clarit
 
 The backend was developed incrementally through **13 major phases**, with each phase extending the architecture while preserving modularity and maintainability.
 
-Beginning with secure authentication and role-based access control, the project gradually evolved into a comprehensive smart waste management platform featuring AI-powered report validation, intelligent duplicate detection, structured cleanup workflows, community engagement, analytics, public transparency, live leaderboards, and a production-ready administration system.
+Beginning with secure authentication and role-based access control (later extended with email-OTP verification and Google sign-in), the project gradually evolved into a comprehensive smart waste management platform featuring AI-powered report validation, intelligent duplicate detection, structured cleanup workflows, community engagement, analytics, public transparency, live leaderboards, and a production-ready administration system.
 
 This phased, modular approach ensured that every feature was built upon a solid architectural foundation, resulting in a backend that is scalable, maintainable, and ready for frontend integration.
 
@@ -1936,7 +1948,7 @@ src
     ├── java
     │   └── com.cleanbharat.wastemanagement
     │       ├── client                # External API clients (Gemini AI)
-    │       ├── config                # Security, Cloudinary, AI, Redis cache & rate-limit policy
+    │       ├── config                # Security, mail, Google sign-in, Cloudinary, AI, Redis cache & rate-limit policy
     │       ├── controller            # REST Controllers
     │       ├── dto                   # Request & Response DTOs
     │       ├── entity                # JPA Entities
@@ -1944,7 +1956,7 @@ src
     │       ├── exception             # Global & Custom Exceptions
     │       ├── repository            # Spring Data JPA Repositories
     │       ├── security              # JWT, Spring Security & rate-limit filter
-    │       ├── service               # Business Logic
+    │       ├── service               # Business Logic (incl. email OTP + Google identity verification)
     │       ├── util                  # Helper Utilities
     │       └── WasteManagementApplication.java
     │
@@ -1971,10 +1983,12 @@ Ensure the following software is installed on your system.
 - Java 21
 - Maven 3.9+
 - PostgreSQL
-- Redis (local Docker or managed cloud — required for dashboard / leaderboard caches)
+- Redis (local Docker or managed cloud — required for dashboard / leaderboard caches, and for sign-up verification codes)
 - Git
 - IntelliJ IDEA (Recommended)
 - Postman (For API Testing)
+- Gmail App Password (optional — only for email-OTP sign-up; Google sign-in works without it)
+- Google Cloud OAuth 2.0 Web client id (optional — only for Google sign-in)
 
 ---
 
@@ -2048,10 +2062,23 @@ google.client-id=
 # SMTP account the six-digit codes are sent from. Usually supplied as the
 # MAIL_* environment variables instead; mail.password is a secret and must
 # never be committed. host and port default to smtp.gmail.com:587.
+# Gmail shows app passwords grouped with spaces - MailConfig strips them.
 
 mail.username=
 
 mail.password=
+
+mail.host=
+
+mail.port=
+
+mail.from=
+
+# Brevo HTTPS fallback (Render free tier blocks outbound SMTP ports 25/465/587,
+# so codes go over port 443 when this key is set; SMTP is used otherwise).
+# Sender address must be verified in the Brevo dashboard. Secret - never commit.
+
+brevo.api-key=
 
 # AI Configuration
 
@@ -2314,6 +2341,8 @@ Implemented features include:
 - JWT Authentication
 - Spring Security
 - BCrypt Password Encryption
+- Email-Code Verification (ownership proof before sign-up)
+- Google ID-Token Verification (OAuth 2.0, no client secret)
 - Stateless Authentication
 - Role-Based Access Control
 - Protected Endpoints
