@@ -60,10 +60,16 @@ public class MailConfig {
 
         JavaMailSenderImpl mailSender = new JavaMailSenderImpl();
 
-        mailSender.setHost(host);
+        // Trimmed: Render/Vercel dashboards often add a trailing space or newline on paste
+        String cleanHost = host != null ? host.trim() : "smtp.gmail.com";
+        String cleanUsername = username != null ? username.trim() : "";
+        // Gmail shows app passwords as "abcd efgh ijkl mnop" - spaces must be stripped
+        String cleanPassword = password != null ? password.replaceAll("\\s+", "") : "";
+
+        mailSender.setHost(cleanHost);
         mailSender.setPort(port);
-        mailSender.setUsername(username);
-        mailSender.setPassword(password);
+        mailSender.setUsername(cleanUsername);
+        mailSender.setPassword(cleanPassword);
 
         Properties properties = mailSender.getJavaMailProperties();
 
@@ -73,14 +79,22 @@ public class MailConfig {
         // rejects the credentials - the usual cause of a silent send failure
         properties.put("mail.smtp.auth", "true");
         properties.put("mail.smtp.starttls.enable", "true");
+        // Required (not just enabled) so a downgraded plain connection is refused outright
+        properties.put("mail.smtp.starttls.required", "true");
+        // Trust the SMTP host explicitly - needed inside minimal Docker images
+        properties.put("mail.smtp.ssl.trust", cleanHost);
+        properties.put("mail.smtp.ssl.protocols", "TLSv1.2");
 
         /*
           Bounded waits. The default is to block indefinitely, so one
           unreachable SMTP host would hold a request thread until the client
           gave up - and sign-up is a path a person is sitting in front of.
+          Note: on Render free tier outbound 25/465/587 is blocked entirely
+          (see EmailVerificationService Brevo fallback over HTTPS/443).
         */
         properties.put("mail.smtp.connectiontimeout", "10000");
         properties.put("mail.smtp.timeout", "10000");
+        properties.put("mail.smtps.timeout", "10000");
         properties.put("mail.smtp.writetimeout", "10000");
 
         return mailSender;

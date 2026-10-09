@@ -19,6 +19,7 @@ import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.security.JwtService;
 import com.cleanbharat.wastemanagement.service.GoogleIdentityService.GoogleIdentity;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -90,6 +91,16 @@ class AuthServiceTest {
     @Mock private EmailVerificationService emailVerificationService; // likewise
 
     @InjectMocks private AuthService authService;
+
+    @BeforeEach
+    void stubSaveReturnsManagedEntity() {
+        // JpaRepository.save never returns null in production; Mockito does by default.
+        // Without this, every test creating an account NPEs on the save result.
+        // Lenient: many tests refuse before reaching save, so the stub is unused there.
+        org.mockito.Mockito.lenient()
+                .when(userRepository.save(any(User.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+    }
 
     // ---------------------------------------------------------------------
     // SIGN-UP WITH AN EMAILED CODE

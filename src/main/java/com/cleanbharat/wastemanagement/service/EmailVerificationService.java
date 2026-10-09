@@ -6,17 +6,22 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -126,6 +131,21 @@ public class EmailVerificationService {
     @Value("${mail.from:}")
     private String from;
 
+    /*
+      Render free tier blocks outbound SMTP ports 25/465/587 entirely (since Sep 2025),
+      so Gmail SMTP always fails there even with correct env vars. Brevo's HTTPS API
+      (port 443) is the free-tier-compatible path. When set, it is preferred over SMTP.
+      Env: BREVO_API_KEY (secret), BREVO_API_URL optional, BREVO_SENDER_NAME optional.
+    */
+    @Value("${brevo.api-key:}")
+    private String brevoApiKey;
+
+    @Value("${brevo.api-url:https://api.brevo.com/v3/smtp/email}")
+    private String brevoApiUrl;
+
+    @Value("${brevo.sender-name:Clean Bharat}")
+    private String brevoSenderName;
+
     /**
      * Sends a fresh code to the address, replacing any code already outstanding.
      *
@@ -179,13 +199,21 @@ public class EmailVerificationService {
         }
 
         try {
-            mailSender.send(buildMessage(email, code));
+            if (StringUtils.hasText(brevoApiKey)) {
+                // HTTPS/443 - works on Render free tier where SMTP ports are blocked
+                sendViaBrevo(email, code);
+            } else {
+                mailSender.send(buildMessage(email, code));
+            }
 
         } catch (Exception ex) {
             discard(fingerprint); // nothing arrived, so nothing should block a retry
 
-            // The address is not logged: an unsent sign-up is still somebody's address
-            log.warn("Could not send a verification code: {}", ex.getClass().getSimpleName());
+            // Address/code never logged; root cause kept for Render log diagnosis (no secrets)
+            log.warn("Could not send a verification code: {} cause={} msg={}",
+                    ex.getClass().getSimpleName(),
+                    rootCauseName(ex),
+                    rootCauseMessage(ex));
 
             throw new InvalidRegistrationException(SEND_FAILED);
         }
@@ -301,7 +329,45 @@ public class EmailVerificationService {
         message.setSubject("Verify your Clean Bharat email address");
 
         // Both languages, as everywhere else a person is addressed directly
-        message.setText("""
+        message.setText(buildTextBody(code));
+
+        return message;
+    }
+
+    /*
+      Sends via Brevo HTTPS API (port 443) instead of SMTP (blocked on Render free tier).
+      Same subject/body as SMTP path; sender must be verified in Brevo dashboard.
+    */
+    private void sendViaBrevo(String email, String code) {
+        String senderEmail = StringUtils.hasText(from) ? from.trim()
+                : (username != null ? username.trim() : "");
+        String apiKey = brevoApiKey != null ? brevoApiKey.trim() : "";
+        String url = StringUtils.hasText(brevoApiUrl) ? brevoApiUrl.trim()
+                : "https://api.brevo.com/v3/smtp/email";
+
+        Map<String, Object> body = Map.of(
+                "sender", Map.of("name", brevoSenderName, "email", senderEmail),
+                "to", List.of(Map.of("email", email)),
+                "subject", "Verify your Clean Bharat email address",
+                "textContent", buildTextBody(code));
+
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(10)); // bounded like SMTP timeouts above
+        factory.setReadTimeout(Duration.ofSeconds(10));
+
+        RestClient client = RestClient.builder().requestFactory(factory).build();
+        client.post()
+                .uri(url)
+                .header("api-key", apiKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toBodilessEntity();
+    }
+
+    private static String buildTextBody(String code) {
+        return """
                 Clean Bharat - email verification
 
                 Your verification code is: %s
@@ -319,9 +385,29 @@ public class EmailVerificationService {
                 यह कोड 10 मिनट में समाप्त हो जाएगा। यदि आपने स्वच्छ भारत खाता
                 बनाने का प्रयास नहीं किया है, तो इस संदेश की अनदेखी करें - कोई
                 खाता नहीं बनाया गया है।
-                """.formatted(code, code));
+                """.formatted(code, code);
+    }
 
-        return message;
+    // Root cause helpers for actionable Render logs (no addresses, codes, or keys)
+    private static String rootCauseName(Throwable ex) {
+        Throwable t = ex;
+        while (t.getCause() != null && t.getCause() != t) {
+            t = t.getCause();
+        }
+        return t.getClass().getSimpleName();
+    }
+
+    private static String rootCauseMessage(Throwable ex) {
+        Throwable t = ex;
+        while (t.getCause() != null && t.getCause() != t) {
+            t = t.getCause();
+        }
+        String msg = t.getMessage();
+        if (!StringUtils.hasText(msg)) {
+            return "n/a";
+        }
+        // Truncate defensively; SMTP messages can embed host strings
+        return msg.length() > 200 ? msg.substring(0, 200) : msg;
     }
 
     /** Six digits, zero padded, from a cryptographically strong source. */
