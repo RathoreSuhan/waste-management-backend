@@ -55,11 +55,19 @@ public class GoogleRegisterRequest {
     @Size(max = 150, message = "Organization name cannot exceed 150 characters")
     private String organizationName;
 
+    /*
+      Where the user is, as three LGD codes - the same three RegisterRequest
+      carries, validated the same way. Google knows the address, not the place.
+    */
     @NotBlank(message = "State is required")
-    @Size(max = 100, message = "State cannot exceed 100 characters")
-    private String state;
+    @Size(max = 20, message = "State is not valid")
+    private String stateCode;
 
-    @NotBlank(message = "City is required")
-    @Size(max = 100, message = "City cannot exceed 100 characters")
-    private String city;
+    @NotBlank(message = "District is required")
+    @Size(max = 20, message = "District is not valid")
+    private String districtCode;
+
+    @NotBlank(message = "City or municipal area is required")
+    @Size(max = 20, message = "City or municipal area is not valid")
+    private String ulbCode;
 }

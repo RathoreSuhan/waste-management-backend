@@ -202,6 +202,20 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.SERVICE_UNAVAILABLE);
     }
 
+    /**
+     * Handles an unreadable location directory.
+     *
+     * 503 rather than 400: the caller sent nothing wrong, and an honest retry
+     * is the fix. What must never happen is the alternative - letting a missing
+     * dataset mean "no location rules today" and accepting free text.
+     */
+    @ExceptionHandler(LocationDataUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleLocationDataUnavailable(LocationDataUnavailableException ex) {
+        log.error("Location directory unavailable", ex);
+        ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.SERVICE_UNAVAILABLE.value());
+        return new ResponseEntity<>(error, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
     @ExceptionHandler(UserDeletionNotAllowedException.class)
     public ResponseEntity<ErrorResponse> handleUserDeletionNotAllowed(UserDeletionNotAllowedException ex) {
         ErrorResponse error = new ErrorResponse(ex.getMessage(), HttpStatus.BAD_REQUEST.value());

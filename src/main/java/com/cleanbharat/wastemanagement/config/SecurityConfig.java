@@ -135,6 +135,15 @@ public class SecurityConfig {
                                 */
                                 "/api/health",
 
+                                /*
+                                  The state / district / ULB directory the
+                                  sign-up form is built from. Read-only and
+                                  public because registration itself is - the
+                                  page has to render before anyone has a token
+                                  to attach to the request.
+                                */
+                                "/api/locations",
+
                                 "/api/leaderboard",       // National leaderboard
                                 "/api/leaderboard/state/**", // State leaderboard
                                 "/api/leaderboard/city/**"   // City leaderboard

@@ -77,6 +77,11 @@ public class User {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;    // Account creation time
 
+    // Cloudinary secure URL of the user's profile picture; nullable because
+    // adding a profile picture is optional.
+    @Column(name = "profile_pic", nullable = true)
+    private String profilePic;
+
     // Runs automatically before insert
     @PrePersist
     public void prePersist() {

@@ -9,4 +9,14 @@ public interface CloudinaryService {
 
     // Delete image from Cloudinary using its URL
     void deleteFile(String imageUrl);
+
+    /**
+     * Deletes an image only when Cloudinary confirms that the asset was removed.
+     *
+     * Unlike {@link #deleteFile(String)}, this method throws when the URL cannot
+     * be parsed, Cloudinary reports any result other than "ok", or its API call
+     * fails. Use it when the caller must not clear its database reference unless
+     * the Cloudinary asset has been deleted.
+     */
+    void deleteFileOrThrow(String imageUrl);
 }

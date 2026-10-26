@@ -19,6 +19,8 @@ import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.security.JwtService;
 import com.cleanbharat.wastemanagement.service.GoogleIdentityService.GoogleIdentity;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService.ResolvedLocation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -89,6 +91,7 @@ class AuthServiceTest {
     @Mock private JwtService jwtService;
     @Mock private GoogleIdentityService googleIdentityService; // verification itself is tested separately
     @Mock private EmailVerificationService emailVerificationService; // likewise
+    @Mock private IndianLocationService indianLocationService; // the directory is tested separately
 
     @InjectMocks private AuthService authService;
 
@@ -100,6 +103,13 @@ class AuthServiceTest {
         org.mockito.Mockito.lenient()
                 .when(userRepository.save(any(User.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+
+        // The real service answers these codes with Punjab and Mohali - in the
+        // LocationUtil shape it stores, acronym folded - stubbed here so these
+        // tests stay about account rules rather than about the dataset.
+        org.mockito.Mockito.lenient()
+                .when(indianLocationService.resolve("3", "608", "248325"))
+                .thenReturn(new ResolvedLocation("Punjab", "S.a.s.nagar - Mohali"));
     }
 
     // ---------------------------------------------------------------------
@@ -169,7 +179,8 @@ class AuthServiceTest {
 
         assertEquals("encoded-user-password", saved.getValue().getPassword());
         assertNull(saved.getValue().getGoogleSubject(), "linked only if they later sign in with Google");
-        assertEquals("Punjab", saved.getValue().getState()); // normalised by LocationUtil
+        assertEquals("Punjab", saved.getValue().getState());
+        assertEquals("S.a.s.nagar - Mohali", saved.getValue().getCity()); // the directory's name for ULB 248325, as LocationUtil shapes it
         assertEquals(0, saved.getValue().getRewardPoints());
     }
 
@@ -223,6 +234,48 @@ class AuthServiceTest {
                 () -> authService.register(registerRequest(Role.ROLE_CLEANER, null, "123456")));
 
         verifyNoInteractions(emailVerificationService);
+    }
+
+    @Test
+    void anInvalidPlaceIsRefusedBeforeAnyEmailIsSent() {
+        noExistingAccount(TYPED_EMAIL);
+
+        // Punjab + Gaya, as the directory sees it: the codes do not form a place
+        when(indianLocationService.resolve("3", "196", "249680"))
+                .thenThrow(new InvalidRegistrationException("That municipal area is not in Punjab."));
+
+        RegisterRequest request = registerRequest(Role.ROLE_CITIZEN, null, null);
+        request.setDistrictCode("196");
+        request.setUlbCode("249680");
+
+        assertThrows(InvalidRegistrationException.class, () -> authService.register(request));
+
+        // A sign-up that was going to be refused must not cost a message
+        verifyNoInteractions(emailVerificationService);
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void theSecondCallReChecksTheLocationRatherThanTrustingTheFirst() {
+        noExistingAccount(TYPED_EMAIL);
+
+        // First call: a valid place, so the code is emailed and nothing is created
+        RegisterRequest request = registerRequest(Role.ROLE_CITIZEN, null, null);
+        authService.register(request);
+        verify(emailVerificationService).sendCode(TYPED_EMAIL);
+
+        // The create call comes back with codes that no longer form a place -
+        // the first call's answer is not carried over
+        request.setVerificationCode("123456");
+        request.setUlbCode("999999");
+        when(indianLocationService.resolve("3", "608", "999999"))
+                .thenThrow(new InvalidRegistrationException("Unknown municipal area."));
+
+        assertThrows(InvalidRegistrationException.class, () -> authService.register(request));
+
+        // Re-checked before the code was even looked at, let alone an account written
+        verify(emailVerificationService, never()).verifyCode(anyString(), anyString());
+        verify(userRepository, never()).save(any(User.class));
     }
 
     // ---------------------------------------------------------------------
@@ -358,8 +411,8 @@ class AuthServiceTest {
         assertEquals(Role.ROLE_CITIZEN, saved.getValue().getRole());
         assertEquals(GOOGLE_SUBJECT, saved.getValue().getGoogleSubject());
         assertEquals(0, saved.getValue().getRewardPoints()); // fresh account starts at zero
-        assertEquals("Punjab", saved.getValue().getState()); // normalised by LocationUtil
-        assertEquals("Mohali", saved.getValue().getCity());
+        assertEquals("Punjab", saved.getValue().getState());
+        assertEquals("S.a.s.nagar - Mohali", saved.getValue().getCity());
 
         assertFalse(response.isRegistrationRequired());
         assertEquals(ISSUED_TOKEN, response.getToken());
@@ -600,8 +653,9 @@ class AuthServiceTest {
                 .password("applicant-password")
                 .role(role)
                 .cleanerType(cleanerType)
-                .state("punjab")   // lower case on purpose: LocationUtil normalises it
-                .city("mohali")
+                .stateCode("3")        // Punjab
+                .districtCode("608")   // S.A.S Nagar
+                .ulbCode("248325")     // Mohali
                 .verificationCode(code)
                 .build();
     }
@@ -642,8 +696,9 @@ class AuthServiceTest {
                 .name(GOOGLE_NAME)
                 .role(role)
                 .cleanerType(cleanerType)
-                .state("punjab")   // lower case on purpose: LocationUtil normalises it
-                .city("mohali")
+                .stateCode("3")        // Punjab
+                .districtCode("608")   // S.A.S Nagar
+                .ulbCode("248325")     // Mohali
                 .build();
     }
 

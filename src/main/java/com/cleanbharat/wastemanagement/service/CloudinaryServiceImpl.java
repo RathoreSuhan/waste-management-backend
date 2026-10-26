@@ -43,6 +43,17 @@ public class CloudinaryServiceImpl implements CloudinaryService {
 
     @Override
     public void deleteFile(String imageUrl) {
+        try {
+            deleteFileOrThrow(imageUrl);
+        } catch (Exception e) {
+            // Best-effort cleanup is used by report/assignment deletion paths.
+            // Record failures without rolling back their completed DB work.
+            log.error("Cloudinary delete failed. imageUrl={}", imageUrl, e);
+        }
+    }
+
+    @Override
+    public void deleteFileOrThrow(String imageUrl) {
 
         // Nothing to destroy when no image was ever stored
         if (imageUrl == null || imageUrl.isBlank()) {
@@ -52,10 +63,12 @@ public class CloudinaryServiceImpl implements CloudinaryService {
         // Derive the Cloudinary public_id this URL points to
         String publicId = extractPublicId(imageUrl);
 
-        // A URL we cannot parse can never be destroyed, so report it loudly
+        // A URL we cannot parse cannot be safely deleted. Fail strict callers
+        // so transactional account updates do not clear a URL for an asset
+        // that may still exist in Cloudinary.
         if (publicId == null || publicId.isBlank()) {
-            log.warn("Cloudinary delete skipped, public_id could not be derived. imageUrl={}", imageUrl);
-            return;
+            log.error("Cloudinary delete failed, public_id could not be derived. imageUrl={}", imageUrl);
+            throw new IllegalArgumentException("Unable to derive Cloudinary public_id from image URL");
         }
 
         try {
@@ -93,23 +106,22 @@ public class CloudinaryServiceImpl implements CloudinaryService {
                 /*
                  * "not found" (or anything else) means the asset survived.
                  *
-                 * The derived public_id most likely does not match the stored
-                 * one, so both are logged to make the mismatch diagnosable.
+                 * Throw so that callers running inside @Transactional can roll
+                 * back their database changes when Cloudinary deletion fails,
+                 * keeping the DB and Cloudinary in sync.
                  */
-                log.warn("Cloudinary delete did not remove the asset. publicId={} result={} imageUrl={}",
-                        publicId, result, imageUrl);
+                throw new RuntimeException(
+                        "Cloudinary delete did not remove the asset. publicId=" + publicId
+                                + " result=" + result + " imageUrl=" + imageUrl
+                );
             }
 
-        } catch (Exception e) {
-            /*
-             * Never rethrow.
-             *
-             * Callers such as ReportDeletionServiceImpl and
-             * AssignmentDeletionServiceImpl run inside @Transactional, so
-             * throwing here would roll back the database cleanup that already
-             * succeeded. The failure is recorded instead.
-             */
+        } catch (RuntimeException e) {
             log.error("Cloudinary delete failed. publicId={} imageUrl={}", publicId, imageUrl, e);
+            throw e;
+        } catch (Exception e) {
+            log.error("Cloudinary delete failed. publicId={} imageUrl={}", publicId, imageUrl, e);
+            throw new RuntimeException("Cloudinary delete failed for publicId=" + publicId, e);
         }
     }
 

@@ -13,7 +13,8 @@ import com.cleanbharat.wastemanagement.exception.*;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.service.GoogleIdentityService.GoogleIdentity;
-import com.cleanbharat.wastemanagement.util.LocationUtil;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService.ResolvedLocation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -75,6 +76,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final GoogleIdentityService googleIdentityService; // the only thing that trusts Google
     private final EmailVerificationService emailVerificationService; // proves an address for every other provider
+    private final IndianLocationService indianLocationService; // decides whether a place is real
 
     /**
      * Signs up with a password, in two calls.
@@ -98,7 +100,19 @@ public class AuthService {
 
         String email = request.getEmail().trim();
 
-        rejectUnavailableAccount(email, request.getRole(), request.getCleanerType());
+        /*
+          Location is resolved here, before the code email is asked for: a
+          sign-up that was going to be refused should not cost a message. The
+          same call runs again on the second request, so the account is created
+          against the codes sent with it rather than the ones sent minutes ago.
+        */
+        ResolvedLocation location = rejectUnavailableAccount(
+                email,
+                request.getRole(),
+                request.getCleanerType(),
+                request.getStateCode(),
+                request.getDistrictCode(),
+                request.getUlbCode());
 
         // First call: ask the person to prove the address is theirs
         if (!StringUtils.hasText(request.getVerificationCode())) {
@@ -122,8 +136,7 @@ public class AuthService {
                 request.getRole(),
                 request.getCleanerType(),
                 request.getOrganizationName(),
-                request.getState(),
-                request.getCity()
+                location
         );
 
         return RegisterResponse.builder()
@@ -215,7 +228,13 @@ public class AuthService {
         */
         GoogleIdentity identity = googleIdentityService.verify(request.getCredential());
 
-        rejectUnavailableAccount(identity.email(), request.getRole(), request.getCleanerType());
+        ResolvedLocation location = rejectUnavailableAccount(
+                identity.email(),
+                request.getRole(),
+                request.getCleanerType(),
+                request.getStateCode(),
+                request.getDistrictCode(),
+                request.getUlbCode());
 
         /*
           Also by subject, which the shared check above cannot cover: this
@@ -246,8 +265,7 @@ public class AuthService {
                 request.getRole(),
                 request.getCleanerType(),
                 request.getOrganizationName(),
-                request.getState(),
-                request.getCity()
+                location
         );
 
         return signedIn(user);
@@ -259,8 +277,20 @@ public class AuthService {
      * Shared so the two routes cannot drift apart: a rule added to one and
      * forgotten on the other is a way in, and "Municipal registration is not
      * allowed" is exactly the kind of rule that must hold on every path.
+     *
+     * Location belongs here for the same reason. The three codes are corrected
+     * against the bundled directory and the canonical names are handed back, so
+     * neither route can store a place the other would have refused.
+     *
+     * @return the validated location, ready to store
      */
-    private void rejectUnavailableAccount(String email, Role role, CleanerType cleanerType) {
+    private ResolvedLocation rejectUnavailableAccount(
+            String email,
+            Role role,
+            CleanerType cleanerType,
+            String stateCode,
+            String districtCode,
+            String ulbCode) {
 
         // Prevent self-registration as ADMIN
         if (role == Role.ROLE_ADMIN) {
@@ -293,6 +323,14 @@ public class AuthService {
         if (role == Role.ROLE_CLEANER && cleanerType == null) {
             throw new InvalidRegistrationException("Cleaner type is required for ROLE_CLEANER.");
         }
+
+        /*
+          The state, district and ULB codes must describe one real place. Anything
+          else - a district borrowed from another state, a ULB code typed by
+          hand, a name passed where a code was expected - is refused with a 400
+          before a single row is written.
+        */
+        return indianLocationService.resolve(stateCode, districtCode, ulbCode);
     }
 
     /**
@@ -303,6 +341,8 @@ public class AuthService {
      *
      * @param googleSubject Google's permanent account id, or null for an account
      *                      that proved its address with an emailed code
+     * @param location      the validated place; its state and city are already in
+     *                      the shape the leaderboard queries match on
      */
     private User createAccount(
             String name,
@@ -312,8 +352,7 @@ public class AuthService {
             Role role,
             CleanerType cleanerType,
             String organizationName,
-            String state,
-            String city
+            ResolvedLocation location
     ) {
 
         User user = User.builder()
@@ -324,8 +363,8 @@ public class AuthService {
                 .role(role)
                 .cleanerType(cleanerType)
                 .organizationName(organizationName)
-                .state(LocationUtil.normalizeLocation(state))
-                .city(LocationUtil.normalizeLocation(city))
+                .state(location.state())
+                .city(location.city())
                 .rewardPoints(0)
                 .build();
 

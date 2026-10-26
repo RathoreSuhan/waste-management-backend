@@ -57,15 +57,25 @@ public class RegisterRequest {
     @Size(max = 150, message = "Organization name cannot exceed 150 characters")
     private String organizationName;
 
-    // User's state
-    @NotBlank(message = "State is required")
-    @Size(max = 100, message = "State cannot exceed 100 characters")
-    private String state;
+    /*
+      Where the user is, as three LGD codes.
 
-    // User's city
-    @NotBlank(message = "City is required")
-    @Size(max = 100, message = "City cannot exceed 100 characters")
-    private String city;
+      Codes rather than names: the names a browser sends are not evidence that
+      a selection was ever real, while a code is checked against the bundled
+      directory - see IndianLocationService, which also decides what is stored.
+      State and city are derived from these, so the two cannot disagree.
+    */
+    @NotBlank(message = "State is required")
+    @Size(max = 20, message = "State is not valid")
+    private String stateCode;
+
+    @NotBlank(message = "District is required")
+    @Size(max = 20, message = "District is not valid")
+    private String districtCode;
+
+    @NotBlank(message = "City or municipal area is required")
+    @Size(max = 20, message = "City or municipal area is not valid")
+    private String ulbCode;
 
     /*
       The six-digit code emailed to the address above, on the second call only.

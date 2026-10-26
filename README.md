@@ -725,7 +725,7 @@ One city maps to exactly one Municipal Corporation, and that corporation is the 
 | Account creation | Only an Admin can register a corporation (city, organization, phone, email) |
 | Login identity | The corporation's registered email — nothing else resolves to municipal authority |
 | Default password | Issued automatically when the corporation row is created (documented for the operator, never printed by the API) |
-| Password change | `PUT /api/account/password` works for corporations exactly as it does for users |
+| Password change | `PATCH /api/account/password` works for corporations exactly as it does for users |
 | Self-registration | Blocked — `/api/auth/register` rejects `ROLE_MUNICIPAL_OFFICER` and rejects any email already used by a corporation |
 | Data scope | Every municipal endpoint resolves the corporation from the JWT, so one city can never read or decide another city's cleanups |
 
@@ -744,6 +744,21 @@ JWT issued with ROLE_MUNICIPAL_OFFICER
               ▼
 Municipal Console scoped to that city only
 ```
+
+---
+
+## Account Profile API
+
+Authenticated user accounts manage their own profile through `/api/account`; no endpoint accepts another user's ID.
+
+| Method | Endpoint | Behaviour |
+|--------|----------|-----------|
+| `GET` | `/api/account/profile` | Returns the signed-in user's name, email, role, and optional profile-picture URL. |
+| `PUT` | `/api/account/profile` | Updates an optional name and/or the uploaded Cloudinary profile-picture URL. Replacing an avatar cleans up the previous asset after the profile update is committed. |
+| `POST` | `/api/account/profile-picture` | Accepts a multipart `file`, uploads it to Cloudinary, and returns its secure URL for the profile update request. |
+| `DELETE` | `/api/account/profile-picture` | Deletes the current avatar from Cloudinary and clears the stored profile-picture URL. |
+| `GET` | `/api/account/record` | Returns the signed-in user's own identity and platform activity record. |
+| `PATCH` | `/api/account/password` | Changes the authenticated account password after validating `currentPassword`, `newPassword`, and `confirmPassword`; this also supports municipal-corporation accounts. |
 
 ---
 

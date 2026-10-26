@@ -9,12 +9,20 @@ import static org.mockito.Mockito.when;
 
 import com.cleanbharat.wastemanagement.dto.ChangePasswordRequest;
 import com.cleanbharat.wastemanagement.dto.SuccessResponse;
+import com.cleanbharat.wastemanagement.dto.UpdateProfileRequest;
+import com.cleanbharat.wastemanagement.dto.admin.UserDetailsResponse;
 import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.entity.User;
+import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
+import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.exception.InvalidPasswordChangeException;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
+import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
+import com.cleanbharat.wastemanagement.repository.CommentRepository;
+import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
+import com.cleanbharat.wastemanagement.repository.VoteRepository;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,7 +46,22 @@ class AccountServiceTest {
     private MunicipalCorporationRepository municipalCorporationRepository;
 
     @Mock
+    private GarbageReportRepository garbageReportRepository;
+
+    @Mock
+    private CleanupAssignmentRepository cleanupAssignmentRepository;
+
+    @Mock
+    private CommentRepository commentRepository;
+
+    @Mock
+    private VoteRepository voteRepository;
+
+    @Mock
     private PasswordEncoder passwordEncoder;
+
+    @Mock
+    private CloudinaryService cloudinaryService;
 
     @InjectMocks
     private AccountService accountService;
@@ -201,5 +224,102 @@ class AccountServiceTest {
         assertEquals("Password changed successfully", response.getMessage());
         verify(municipalCorporationRepository).save(corporation);
         verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void deleteProfilePictureClearsTheStoredUrlOnlyAfterCloudinaryDeletionSucceeds() {
+        String profilePicUrl = "https://res.cloudinary.com/demo/image/upload/v1/profile-picture.jpg";
+        User user = User.builder()
+                .email(EMAIL)
+                .profilePic(profilePicUrl)
+                .build();
+
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+
+        SuccessResponse response = accountService.deleteProfilePicture(EMAIL);
+
+        assertEquals(null, user.getProfilePic());
+        assertEquals("Profile picture removed successfully", response.getMessage());
+        verify(cloudinaryService).deleteFileOrThrow(profilePicUrl);
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void deleteProfilePictureDoesNotClearOrSaveWhenCloudinaryDeletionFails() {
+        String profilePicUrl = "https://res.cloudinary.com/demo/image/upload/v1/profile-picture.jpg";
+        User user = User.builder()
+                .email(EMAIL)
+                .profilePic(profilePicUrl)
+                .build();
+
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        RuntimeException cloudinaryFailure = new RuntimeException("Cloudinary delete failed");
+        org.mockito.Mockito.doThrow(cloudinaryFailure)
+                .when(cloudinaryService)
+                .deleteFileOrThrow(profilePicUrl);
+
+        RuntimeException exception = assertThrows(
+                RuntimeException.class,
+                () -> accountService.deleteProfilePicture(EMAIL)
+        );
+
+        assertEquals(cloudinaryFailure, exception);
+        assertEquals(profilePicUrl, user.getProfilePic());
+        verify(cloudinaryService).deleteFileOrThrow(profilePicUrl);
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+    @Test
+    void updateProfilePersistsReplacementBeforeBestEffortOldImageCleanup() {
+        String oldProfilePicUrl = "https://res.cloudinary.com/demo/image/upload/v1/old-profile-picture.jpg";
+        String newProfilePicUrl = "https://res.cloudinary.com/demo/image/upload/v2/new-profile-picture.jpg";
+        User user = User.builder()
+                .email(EMAIL)
+                .name("Original Name")
+                .profilePic(oldProfilePicUrl)
+                .build();
+
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+
+        SuccessResponse response = accountService.updateProfile(
+                EMAIL,
+                new UpdateProfileRequest("Updated Name", newProfilePicUrl)
+        );
+
+        assertEquals("Updated Name", user.getName());
+        assertEquals(newProfilePicUrl, user.getProfilePic());
+        assertEquals("Profile updated successfully", response.getMessage());
+        verify(userRepository).save(user);
+        verify(cloudinaryService).deleteFile(oldProfilePicUrl);
+        verify(cloudinaryService, never()).deleteFileOrThrow(oldProfilePicUrl);
+    }
+
+    @Test
+    void getAccountRecordReturnsOnlyTheAuthenticatedUsersIdentityAndActivity() {
+        User user = User.builder()
+                .id(24L)
+                .name("Suhan Kumar Singh")
+                .email(EMAIL)
+                .role(Role.ROLE_CITIZEN)
+                .state("Bihar")
+                .city("Gaya")
+                .rewardPoints(45)
+                .build();
+
+        when(userRepository.findByEmail(EMAIL)).thenReturn(Optional.of(user));
+        when(cleanupAssignmentRepository.countByCleanerAndStatus(user, AssignmentStatus.COMPLETED))
+                .thenReturn(0L);
+        when(garbageReportRepository.countByUser(user)).thenReturn(3L);
+        when(commentRepository.countByUser(user)).thenReturn(4L);
+        when(voteRepository.countByUserAndRatingIsNotNull(user)).thenReturn(2L);
+
+        UserDetailsResponse response = accountService.getAccountRecord(EMAIL);
+
+        assertEquals(24L, response.getId());
+        assertEquals("Suhan Kumar Singh", response.getName());
+        assertEquals(3L, response.getReportsCreated());
+        assertEquals(4L, response.getComments());
+        assertEquals(2L, response.getVotes());
+        assertEquals(45, response.getRewardPoints());
     }
 }

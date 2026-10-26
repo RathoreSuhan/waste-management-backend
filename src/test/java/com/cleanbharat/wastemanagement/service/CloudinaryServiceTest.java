@@ -194,6 +194,27 @@ class CloudinaryServiceTest {
     }
 
     // ---------------------------------------------------------------------
+    // DELETE: STRICT PROFILE-IMAGE CONTRACT
+    // ---------------------------------------------------------------------
+
+    @Test
+    void strictDeleteFailsWhenCloudinaryDoesNotConfirmAssetRemoval() throws IOException {
+        when(cloudinary.uploader()).thenReturn(uploader);
+        when(uploader.destroy(anyString(), anyMap())).thenReturn(Map.of("result", "not found"));
+
+        assertThrows(RuntimeException.class,
+                () -> cloudinaryService.deleteFileOrThrow(SECURE_URL));
+    }
+
+    @Test
+    void strictDeleteFailsForAnUnparseableUrlWithoutCallingCloudinary() {
+        assertThrows(IllegalArgumentException.class,
+                () -> cloudinaryService.deleteFileOrThrow("https://example.test/images/some-other-host.jpg"));
+
+        verifyNoInteractions(cloudinary);
+    }
+
+    // ---------------------------------------------------------------------
     // Test fixtures
     // ---------------------------------------------------------------------
 
