@@ -19,8 +19,14 @@ public interface MunicipalCorporationService {
     // Get municipal corporation by id
     MunicipalCorporationResponse getById(Long id);
 
+    // Get the corporation represented by the authenticated municipal officer
+    MunicipalCorporationResponse getOwnCorporation(String email);
+
     // Update municipal corporation
     MunicipalCorporationResponse updateMunicipalCorporation(Long id, MunicipalCorporationRequest request);
+
+    // Update only the corporation represented by the authenticated municipal officer
+    MunicipalCorporationResponse updateOwnCorporation(String email, MunicipalCorporationRequest request);
 
     // Delete municipal corporation
     void deleteMunicipalCorporation(Long id);

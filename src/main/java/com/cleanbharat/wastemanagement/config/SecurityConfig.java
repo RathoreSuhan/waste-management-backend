@@ -194,6 +194,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/municipal-corporations/city/**")
                         .authenticated()
 
+                        // A municipal officer can maintain only the corporation
+                        // identified by their authenticated email.
+                        .requestMatchers("/api/municipal-corporations/me")
+                        .hasRole("MUNICIPAL_OFFICER")
+
                         // Admin-only endpoints
                         .requestMatchers("/api/municipal-corporations/**")
                         .hasRole("ADMIN")

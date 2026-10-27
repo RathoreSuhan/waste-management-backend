@@ -5,6 +5,7 @@ import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
 import com.cleanbharat.wastemanagement.service.MunicipalCorporationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
@@ -28,6 +29,12 @@ public class MunicipalCorporationController {
         return municipalCorporationService.getAllMunicipalCorporations();
     }
 
+    /** Returns only the corporation belonging to the authenticated officer. */
+    @GetMapping("/me")
+    public MunicipalCorporationResponse getOwnMunicipalCorporation(Authentication authentication) {
+        return municipalCorporationService.getOwnCorporation(authentication.getName());
+    }
+
     // Get By ID
     @GetMapping("/{id}")
     public MunicipalCorporationResponse getById(@PathVariable Long id) {
@@ -47,6 +54,15 @@ public class MunicipalCorporationController {
             @Valid @RequestBody MunicipalCorporationRequest request) {
 
         return municipalCorporationService.updateMunicipalCorporation(id, request);
+    }
+
+    /** Updates only the corporation belonging to the authenticated officer. */
+    @PutMapping("/me")
+    public MunicipalCorporationResponse updateOwnMunicipalCorporation(
+            Authentication authentication,
+            @Valid @RequestBody MunicipalCorporationRequest request) {
+
+        return municipalCorporationService.updateOwnCorporation(authentication.getName(), request);
     }
 
     // Delete Municipal Corporation

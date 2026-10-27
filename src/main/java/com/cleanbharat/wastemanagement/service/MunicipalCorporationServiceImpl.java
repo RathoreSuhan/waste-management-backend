@@ -80,6 +80,11 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         return mapToResponse(municipalCorporation);
     }
 
+    @Override
+    public MunicipalCorporationResponse getOwnCorporation(String email) {
+        return mapToResponse(findCorporationByEmail(email));
+    }
+
     /*
      * The cached municipal overview carries this corporation's own
      * organizationName and city in its header, so an edit here makes the
@@ -113,6 +118,27 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         MunicipalCorporation updatedMunicipalCorporation = municipalCorporationRepository.save(municipalCorporation);
 
         return mapToResponse(updatedMunicipalCorporation);
+    }
+
+    /**
+     * Municipal officers never supply an id: the authenticated email resolves
+     * their one corporation, preventing a city from editing another city's record.
+     */
+    @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
+    @Override
+    public MunicipalCorporationResponse updateOwnCorporation(
+            String email,
+            MunicipalCorporationRequest request) {
+
+        MunicipalCorporation municipalCorporation = findCorporationByEmail(email);
+        assertEmailIsFree(request.getEmail(), municipalCorporation.getId());
+
+        municipalCorporation.setCity(request.getCity());
+        municipalCorporation.setOrganizationName(request.getOrganizationName());
+        municipalCorporation.setPhone(request.getPhone());
+        municipalCorporation.setEmail(request.getEmail());
+
+        return mapToResponse(municipalCorporationRepository.save(municipalCorporation));
     }
 
     // Removing a city body retires its cached overview along with it
@@ -149,6 +175,11 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
             throw new EmailAlreadyExistsException(
                     "A user account already exists with email: " + email);
         }
+    }
+
+    private MunicipalCorporation findCorporationByEmail(String email) {
+        return municipalCorporationRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Municipal Corporation not found"));
     }
 
     // Entity -> Response DTO (password is intentionally never exposed)
