@@ -6,7 +6,7 @@
     "description": "Local Government Directory export: state and district wise urban local bodies"
   },
   "counts": {
-    "states": 35,
+    "states": 36,
     "districts": 752,
     "ulbs": 5059,
     "districtUlbRows": 5094
@@ -17454,6 +17454,11 @@
           ]
         }
       ]
+    },
+    {
+      "code": "31",
+      "name": "Lakshadweep",
+      "districts": []
     },
     {
       "code": "32",

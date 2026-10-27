@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -195,10 +196,42 @@ class IndianLocationServiceTest {
     @Test
     void theDirectoryCarriesEveryWorkbookLevel() {
         // The generated counts, pinned so a truncated regeneration is caught
-        assertEquals(35, directory.path("counts").path("states").asInt());
+        assertEquals(36, directory.path("counts").path("states").asInt());
         assertEquals(752, directory.path("counts").path("districts").asInt());
         assertEquals(5059, directory.path("counts").path("ulbs").asInt());
         assertEquals(5094, directory.path("counts").path("districtUlbRows").asInt());
+    }
+
+    @Test
+    void aStateWithoutUlbRowsIsListedButResolvesNothing() {
+        // The supplied export is a ULB export: it carries no Lakshadweep rows,
+        // which is not evidence that the Union Territory does not exist. The
+        // state still appears in the selector, but with no districts and no
+        // municipal areas - and any code beneath it is refused, never guessed.
+        JsonNode lakshadweep = stateByCode("31");
+        assertNotNull(lakshadweep, "Lakshadweep (state 31) missing from the directory");
+        assertEquals("Lakshadweep", lakshadweep.path("name").asText());
+        assertEquals(0, lakshadweep.path("districts").size());
+
+        // Ladakh keeps its own code and its workbook rows: no supplement collision
+        JsonNode ladakh = stateByCode("37");
+        assertNotNull(ladakh, "Ladakh (state 37) missing from the directory");
+        assertTrue(ladakh.path("districts").size() > 0);
+
+        InvalidRegistrationException refused = assertThrows(
+                InvalidRegistrationException.class,
+                () -> service.resolve("31", "196", "249680"));
+
+        assertTrue(refused.getMessage().contains("Lakshadweep"), refused.getMessage());
+    }
+
+    private static JsonNode stateByCode(String code) {
+        for (JsonNode state : directory.path("states")) {
+            if (code.equals(state.path("code").asText())) {
+                return state;
+            }
+        }
+        return null;
     }
 
     @Test

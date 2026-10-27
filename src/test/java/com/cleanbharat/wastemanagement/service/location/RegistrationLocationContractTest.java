@@ -87,7 +87,7 @@ class RegistrationLocationContractTest {
         mockMvc.perform(get("/api/locations"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Cache-Control", "max-age=86400, public"))
-                .andExpect(jsonPath("$.counts.states").value(35))
+                .andExpect(jsonPath("$.counts.states").value(36))
                 .andExpect(jsonPath("$.counts.districts").value(752))
                 .andExpect(jsonPath("$.counts.ulbs").value(5059))
                 .andExpect(jsonPath("$.states[?(@.code == '10')].name").value("Bihar"));

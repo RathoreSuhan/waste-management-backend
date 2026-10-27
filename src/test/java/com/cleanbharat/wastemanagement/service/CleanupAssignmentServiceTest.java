@@ -16,6 +16,7 @@ import com.cleanbharat.wastemanagement.exception.AssignmentAlreadyCompletedExcep
 import com.cleanbharat.wastemanagement.exception.CleanerTooFarFromSiteException;
 import com.cleanbharat.wastemanagement.exception.CleanupNotStartedException;
 import com.cleanbharat.wastemanagement.exception.InvalidAssignmentStateException;
+import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.exception.UnauthorizedAssignmentAccessException;
 import com.cleanbharat.wastemanagement.repository.CleanupApprovalRepository;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
@@ -640,6 +641,69 @@ class CleanupAssignmentServiceTest {
     }
 
     // ---------------------------------------------------------------------
+    // DEFAULT ASSIGNMENT: MUNICIPAL ROUTING BY REPORT CITY
+    // ---------------------------------------------------------------------
+
+    @Test
+    void theDefaultAssignmentRoutesToTheMunicipalityOfTheReportCity() {
+        // The workbook's official Mohali ULB name (248325), in the stored
+        // LocationUtil shape a registration under it produces
+        GarbageReport report = report("S.a.s.nagar - Mohali");
+        MunicipalCorporation mohaliCorporation = MunicipalCorporation.builder()
+                .id(9L)
+                .city("S.a.s.nagar - Mohali")
+                .organizationName("Municipal Corporation SAS Nagar Mohali")
+                .build();
+
+        when(assignmentRepository.existsByReport(report)).thenReturn(false);
+        when(municipalRepository.findByCityIgnoreCase("S.a.s.nagar - Mohali"))
+                .thenReturn(Optional.of(mohaliCorporation));
+
+        cleanupAssignmentService.createDefaultAssignment(report);
+
+        var saved = org.mockito.ArgumentCaptor.forClass(CleanupAssignment.class);
+        verify(assignmentRepository).save(saved.capture());
+        assertEquals(AssignmentStatus.PENDING, saved.getValue().getStatus());
+        assertEquals(mohaliCorporation, saved.getValue().getAssignedMunicipalCorporation());
+    }
+
+    @Test
+    void aReportCityWithNoConfiguredMunicipalityIsRefusedNotRouted() {
+        // A ULB being selectable in the directory says nothing about whether a
+        // Clean Bharat MunicipalCorporation row exists for it: no row means no
+        // destination, no invented contact and no reroute to another city.
+        GarbageReport report = report("Bodh Gaya");
+        when(assignmentRepository.existsByReport(report)).thenReturn(false);
+        when(municipalRepository.findByCityIgnoreCase("Bodh Gaya"))
+                .thenReturn(Optional.empty());
+
+        ResourceNotFoundException refused = assertThrows(
+                ResourceNotFoundException.class,
+                () -> cleanupAssignmentService.createDefaultAssignment(report));
+
+        assertTrue(refused.getMessage().contains("Bodh Gaya"), refused.getMessage());
+        verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
+    }
+
+    @Test
+    void aCorporationRegisteredUnderADifferentSpellingDoesNotCatchTheReport() {
+        // Routing matches the city value exactly (case-insensitively): the
+        // workbook's "S.A.S.Nagar - Mohali" stores as "S.a.s.nagar - Mohali",
+        // which a corporation row keyed "Mohali" cannot match. The gap must
+        // fail loudly here rather than silently lose every report from that
+        // city - register the corporation with the canonical ULB name.
+        GarbageReport report = report("S.a.s.nagar - Mohali");
+        when(assignmentRepository.existsByReport(report)).thenReturn(false);
+        when(municipalRepository.findByCityIgnoreCase("S.a.s.nagar - Mohali"))
+                .thenReturn(Optional.empty());
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> cleanupAssignmentService.createDefaultAssignment(report));
+
+        verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
+    }
+
+    // ---------------------------------------------------------------------
     // Test fixtures
     // ---------------------------------------------------------------------
 
@@ -657,6 +721,23 @@ class CleanupAssignmentServiceTest {
                 .role(Role.ROLE_CLEANER)
                 .state("Maharashtra")
                 .city("Mumbai")
+                .build();
+    }
+
+    /* A freshly reported site in the given city, before any assignment exists */
+    private GarbageReport report(String city) {
+        return GarbageReport.builder()
+                .id(11L)
+                .title("Garbage pile near market")
+                .description("Mixed waste dumped on the footpath")
+                .imageUrl(BEFORE_IMAGE_URL)
+                .address("MG Road")
+                .city(city)
+                .state("Punjab")
+                .pincode("160017")
+                .latitude(SITE_LATITUDE)
+                .longitude(SITE_LONGITUDE)
+                .status(ReportStatus.PENDING)
                 .build();
     }
 

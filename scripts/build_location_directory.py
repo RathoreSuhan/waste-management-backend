@@ -4,8 +4,8 @@ Generate the Clean Bharat location directory from the supplied LGD workbook.
 The workbook (Ulb_By_State_<date>.xlsx) is the single authoritative source. This
 script reads it with the standard library only - an xlsx is a zip of XML - and
 writes a deterministic JSON directory that the backend serves and validates
-against. Nothing is inferred: every state, district, ULB and type in the output
-is a value that appears in the workbook.
+against. Districts, ULBs and types come only from the workbook. A documented
+state-only supplement lists Lakshadweep without inventing municipal areas.
 
 Run from the backend project root:
 
@@ -70,6 +70,16 @@ TYPE_CANONICAL = {
     "municipal council": "Municipal Council",
     "notified area council": "Notified Area Council",
 }
+
+# States/UTs of the LGD master list that this ULB export carries no rows for.
+# The export's silence says nothing about whether the place exists - it only
+# means this workbook, an urban-local-body export, lists no ULB under it. The
+# state still belongs in the selector, with an empty district list rather than
+# invented records. Lakshadweep (LGD state code 31) is the only such state in
+# the 2026-10-18 export; Ladakh (37) IS covered by workbook rows.
+STATES_WITHOUT_ULB_ROWS = [
+    {"code": "31", "name": "Lakshadweep"},
+]
 
 
 def canonical_type(value):
@@ -157,6 +167,19 @@ def main():
             "name": ulb_name,
             "type": canonical_type(ulb_type),
         })
+
+    # Complete the state/UT enumeration. A code the workbook does cover is
+    # already keyed by its rows and wins; a name disagreement between the
+    # workbook and the supplement means one of them is wrong, so refuse.
+    for entry in STATES_WITHOUT_ULB_ROWS:
+        existing = states.get(entry["code"])
+        if existing is None:
+            states[entry["code"]] = {"code": entry["code"], "name": entry["name"], "districts": []}
+        elif existing["name"] != entry["name"]:
+            raise ValueError(
+                f"state {entry['code']} is {existing['name']!r} in the workbook "
+                f"but {entry['name']!r} in the supplement"
+            )
 
     # Attach districts to states, then sort each level by code so the file is
     # stable across runs regardless of workbook ordering.
