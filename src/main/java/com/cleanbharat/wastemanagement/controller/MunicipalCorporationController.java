@@ -47,6 +47,17 @@ public class MunicipalCorporationController {
         return municipalCorporationService.getByCity(city);
     }
 
+    /*
+      Get By ULB code - the location-V2 contact lookup. A report carrying a
+      directory ULB code resolves its corporation through this exact match;
+      there is no city-name variant of it, because a mapped corporation's
+      stored city is its preserved legacy value and must stay that way.
+    */
+    @GetMapping("/ulb/{ulbCode}")
+    public MunicipalCorporationResponse getByUlbCode(@PathVariable String ulbCode) {
+        return municipalCorporationService.getByUlbCode(ulbCode);
+    }
+
     // Update Municipal Corporation
     @PutMapping("/{id}")
     public MunicipalCorporationResponse updateMunicipalCorporation(

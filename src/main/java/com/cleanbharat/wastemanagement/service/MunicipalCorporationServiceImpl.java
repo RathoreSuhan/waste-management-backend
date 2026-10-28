@@ -93,6 +93,24 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         return mapToResponse(municipalCorporation);
     }
 
+    /*
+      The location-V2 lookup: a code-backed report knows the exact ULB its
+      corporation is accountable for, so the code is the whole match. There
+      is deliberately no city-name fallback - the stored city on a mapped
+      corporation is its preserved legacy value (e.g. "Mohali"), which is
+      exactly what a fallback would wrongly compare against.
+    */
+    @Override
+    public MunicipalCorporationResponse getByUlbCode(String ulbCode) {
+
+        MunicipalCorporation municipalCorporation = municipalCorporationRepository
+                        .findByUlbCode(ulbCode)
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Municipal Corporation not found with ULB code: " + ulbCode));
+
+        return mapToResponse(municipalCorporation);
+    }
+
     @Override
     public MunicipalCorporationResponse getById(Long id) {
 

@@ -16,6 +16,14 @@ public interface MunicipalCorporationService {
     // Get municipal corporation by city
     MunicipalCorporationResponse getByCity(String city);
 
+    /*
+      Get the corporation accountable for one exact LGD ULB code - the
+      location-V2 lookup a code-backed report's contact panel uses. Never
+      falls back to city-name matching: a code with no corporation is a
+      clean 404, not a guess.
+    */
+    MunicipalCorporationResponse getByUlbCode(String ulbCode);
+
     // Get municipal corporation by id
     MunicipalCorporationResponse getById(Long id);
 
