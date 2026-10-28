@@ -29,6 +29,8 @@ public class ReportMapper {
                 .landmark(report.getLandmark())
                 .city(report.getCity())
                 .state(report.getState())
+                .district(report.getDistrict())
+                .ulbCode(report.getUlbCode())
                 .pincode(report.getPincode())
 
                 // Uploaded image

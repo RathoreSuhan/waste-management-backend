@@ -82,6 +82,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
             String city
     );
 
+    /**
+     * Returns Top 10 cleaners belonging to a district - every ULB inside it,
+     * because the stored district is what the refactor's eligibility and
+     * boards group on. The state is part of the match so two states naming a
+     * district the same way can never share a board.
+     */
+    List<User> findTop10ByRoleAndStateAndDistrictOrderByRewardPointsDesc(
+            Role role,
+            String state,
+            String district
+    );
+
 
     /**
      * Counts users belonging to a specific role.

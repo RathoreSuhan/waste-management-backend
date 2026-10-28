@@ -17,9 +17,27 @@ import lombok.Data;
 @Data // Generates getters, setters, toString(), equals(), hashCode()
 public class MunicipalCorporationRequest {
 
-    @NotBlank(message = "City is required")
+    /*
+      Where the corporation works, in one of two shapes. The directory cascade
+      sends the three LGD codes below (preferred: authoritative and
+      unambiguous - the city is then stored as the workbook's canonical ULB
+      name and the row is routed to by its ULB code). The legacy form sends
+      the free-text city, which is stored verbatim and matched
+      case-insensitively, exactly as it always was. The service enforces that
+      exactly one shape is present, and on an existing row the codes map the
+      ULB without ever rewriting the stored city.
+    */
     @Size(max = 100, message = "City cannot exceed 100 characters")
-    private String city; // City name
+    private String city; // City name (legacy free-text path)
+
+    @Size(max = 20, message = "State code is not valid")
+    private String stateCode;
+
+    @Size(max = 20, message = "District code is not valid")
+    private String districtCode;
+
+    @Size(max = 20, message = "City or municipal-area code is not valid")
+    private String ulbCode;
 
     @NotBlank(message = "Organisation name is required")
     @Size(max = 150, message = "Organisation name cannot exceed 150 characters")

@@ -296,6 +296,7 @@ public class PublicFeedServiceImpl implements PublicFeedService {
                 .landmark(assignment.getReport().getLandmark())
                 .city(assignment.getReport().getCity())
                 .state(assignment.getReport().getState())
+                .district(assignment.getReport().getDistrict())
 
                 // Cleaner information
                 .cleanerName(assignment.getCleaner().getName())

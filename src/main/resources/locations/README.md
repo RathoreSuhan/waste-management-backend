@@ -74,27 +74,37 @@ conflicting code/name fails generation rather than silently overwriting it.
 
 ## Municipal routing compatibility
 
-Reports and leaderboards group on the stored city value, which is the
-workbook's official ULB name run through `LocationUtil` — for example ULB
-`248325` (`S.A.S.Nagar - Mohali`) stores as `S.a.s.nagar - Mohali`. A
-Municipal Corporation row must therefore be registered with that exact
-canonical value: the destination lookup matches the city only, ignoring
-case, and a row keyed `Mohali` will not catch reports from citizens who
-registered under the directory's ULB name.
+Since the location refactor, routing is **per report**. A report that carries
+a directory ULB code (`garbage_reports.ulb_code`) is routed by that code and
+only by that code - `MunicipalCorporationRepository.findByUlbCode` - and a
+miss is a loud HTTP 404 that names the municipal area and states that the
+report was not saved. It is never redirected to another corporation and never
+matched by a city alias.
+
+A legacy report without a code resolves its destination from the stored city
+value exactly as before: the workbook's official ULB name run through
+`LocationUtil` (for example ULB `248325`, `S.A.S.Nagar - Mohali`, stores as
+`S.a.s.nagar - Mohali`), matched case-insensitively against
+`municipal_corporations.city`. That legacy column is therefore preserved
+verbatim even when an office is later mapped to its ULB code - the T3
+preflight mapping writes `ulb_code` and never rewrites `city`, so legacy
+reports keep reaching their destination while new ones route by code.
 
 LGD ULB records do not create Clean Bharat municipal accounts or contacts.
-An administrator must configure the destination separately. A missing match
-returns HTTP 404 naming the report city; it is not redirected elsewhere.
-Report creation and default-assignment creation share a transaction, so the
-exception rolls back the report insert before any assignment is saved.
-The report service also attempts to delete the uploaded image; external
-Cloudinary deletion is best-effort, not a database-transaction guarantee.
-The focused Mockito tests verify routing, error propagation, save order and
-the cleanup call, but do not prove rollback against a live database.
+An administrator must configure the destination separately - through the
+admin form's directory cascade, which stores the canonical ULB name and code
+and guards one corporation per ULB. A missing match returns HTTP 404 naming
+the report city; it is not redirected elsewhere. Report creation and
+default-assignment creation share a transaction, so the exception rolls back
+the report insert before any assignment is saved. The report service also
+attempts to delete the uploaded image; external Cloudinary deletion is
+best-effort, not a database-transaction guarantee.
 
-The existing lookup is city-only and case-insensitive, not state/ULB-code
-scoped. No alias to `Mohali` or live municipal-data migration was introduced;
-existing configured names must be checked independently before rollout.
+Before the code-backed routing contract goes live, the deployment preflight
+maps and audits every existing corporation (unique `ulb_code`, coverage of
+recent reports' locations). The preflight covers the explicitly audited
+locations only - a directory ULB nobody has onboarded is refused with the
+"not onboarded yet" error until an administrator maps it.
 
 The files live under `classpath:locations`, not Spring's default `static`,
 `public`, `resources` or `META-INF/resources` web roots. The JSON is exposed

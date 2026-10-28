@@ -66,9 +66,27 @@ public class User {
     @Column(nullable = false)
     private String state;
 
-    // City where the user belongs
+    // City where the user belongs (the directory's ULB name)
     @Column(nullable = false)
     private String city;
+
+    /*
+      District where the user belongs, in the same canonical shape as state and
+      city. Nullable only for accounts registered before the directory captured
+      the district: cleaner eligibility and the district leaderboard compare
+      this value against a report's district, and a row without one is treated
+      as not yet reconciled (fail-closed, never matched by city name).
+    */
+    @Column(length = 100)
+    private String district;
+
+    /*
+      The LGD directory's ULB code behind this account's city. Nullable for the
+      same legacy reason as district; new accounts always carry it, and it is
+      what ties the account to one exact urban local body.
+    */
+    @Column(name = "ulb_code", length = 20)
+    private String ulbCode;
 
     @OneToMany(mappedBy = "cleaner")
     @Builder.Default

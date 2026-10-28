@@ -10,6 +10,19 @@ public interface MunicipalCorporationRepository extends JpaRepository<MunicipalC
     // Find municipal corporation by city name
     Optional<MunicipalCorporation> findByCityIgnoreCase(String city);
 
+    /*
+      The code-backed routing key: a report carrying a directory ULB code
+      resolves its destination by this column, and only by this column - never
+      by district, never by a free-text city name.
+    */
+    Optional<MunicipalCorporation> findByUlbCode(String ulbCode);
+
+    // Guards the admin form against mapping two corporations to one ULB
+    boolean existsByUlbCode(String ulbCode);
+
+    // Same guard for updates, ignoring the row being edited itself
+    boolean existsByUlbCodeAndIdNot(String ulbCode, Long id);
+
     /**
      * Looks a corporation up by its official email, which doubles as its login id.
      * Case-insensitive because people type "MCMohali@..." and "mcmohali@..." alike.

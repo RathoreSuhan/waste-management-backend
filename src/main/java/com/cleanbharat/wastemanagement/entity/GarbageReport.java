@@ -35,6 +35,13 @@ import java.util.List;
                 @Index(
                         name = "idx_report_created_at",
                         columnList = "createdAt"
+                ),
+
+                // Cleaner eligibility and the district leaderboard filter
+                // reports by their (state, district) pair
+                @Index(
+                        name = "idx_report_state_district",
+                        columnList = "state,district"
                 )
         }
 )
@@ -62,10 +69,28 @@ public class GarbageReport {
     private String landmark; // nearby landmark
 
     @Column(nullable = false)
-    private String city; // city name
+    private String city; // city name (for code-backed reports: the directory's ULB name)
 
     @Column(nullable = false)
     private String state; // state name
+
+    /*
+      District of the reported site, in the same canonical shape as state.
+      Nullable only on reports filed before the report form carried the
+      directory cascade: cleaner eligibility compares this against the
+      cleaner's district and treats NULL as not yet reconciled (fail-closed).
+    */
+    @Column(length = 100)
+    private String district;
+
+    /*
+      The LGD directory's ULB code behind this report's city. Nullable on
+      legacy reports; code-backed reports always carry it, and it is what
+      routes the report to the Municipal Corporation configured for that
+      exact ULB (never by district, never by free-text city name).
+    */
+    @Column(name = "ulb_code", length = 20)
+    private String ulbCode;
 
     @Column(nullable = false)
     private String pincode; // postal code

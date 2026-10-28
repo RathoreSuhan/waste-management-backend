@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 
 import java.io.InputStream;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -74,8 +75,14 @@ public class IndianLocationService {
     private Map<String, Set<String>> statesOfDistrict = Map.of();
     private Map<String, Set<String>> statesOfUlb = Map.of();
 
+    /**
+     * Loads (or reloads) the bundled directory. Public so the migration
+     * runner's tests - which live in another package - can drive it without
+     * a Spring context; safe to call repeatedly, it just re-reads and
+     * re-indexes the resource.
+     */
     @PostConstruct
-    void load() {
+    public void load() {
         try (InputStream in = new ClassPathResource(DIRECTORY_PATH).getInputStream()) {
 
             index(objectMapper.readTree(in));
@@ -203,12 +210,16 @@ public class IndianLocationService {
           Stored in the shape LocationUtil gives, because the state and city
           leaderboards normalise what a visitor types the same way and then
           match it exactly. The name itself is the workbook's ULB name - never
-          the type, never a shortened form. District and ULB code were only
-          needed to prove the place is real; nothing reads them afterwards.
+          the type, never a shortened form. The district name and ULB code are
+          carried alongside: the district is what cleaner eligibility and the
+          district leaderboard group on, and the code is what routes a report
+          to the one Municipal Corporation configured for that exact ULB.
         */
         return new ResolvedLocation(
                 LocationUtil.normalizeLocation(stateName),
-                LocationUtil.normalizeLocation(ulbName));
+                LocationUtil.normalizeLocation(districtName),
+                LocationUtil.normalizeLocation(ulbName),
+                ulb);
     }
 
     private JsonNode requireDirectory() {
@@ -218,6 +229,105 @@ public class IndianLocationService {
                             + "Please try again shortly.");
         }
         return document;
+    }
+
+    /**
+     * Maps a stored state/city NAME pair back to its directory entry.
+     *
+     * This is the offline reverse of {@link #resolve}: the migration runner
+     * (and only the migration runner) uses it to give rows that were stored
+     * before the refactor their district and ULB code. It must never be used
+     * to validate a client request - names are not proof, codes are, and
+     * every live validation path stays on {@link #resolve}.
+     *
+     * The match is exact against the canonical (LocationUtil-normalised)
+     * directory names within the given state, so a row whose stored text
+     * differs by even one character stays unmapped and lands on the audit
+     * worklist instead of being guessed at. A ULB the workbook lists under
+     * several districts of the same state is reported ambiguous rather than
+     * silently mapped to one of them.
+     *
+     * @return a {@link NameMatch} whose location is null when the pair cannot
+     *         be mapped unambiguously; {@code reason} then says exactly why
+     */
+    public NameMatch matchByNames(String stateName, String cityName) {
+
+        requireDirectory();
+
+        if (!StringUtils.hasText(stateName) || !StringUtils.hasText(cityName)) {
+            return new NameMatch(null, "missing state or city value");
+        }
+
+        String wantedState = LocationUtil.normalizeLocation(stateName);
+        String wantedCity = LocationUtil.normalizeLocation(cityName);
+
+        String stateCode = null;
+        for (Map.Entry<String, String> entry : stateNames.entrySet()) {
+            if (LocationUtil.normalizeLocation(entry.getValue()).equals(wantedState)) {
+                stateCode = entry.getKey();
+                break;
+            }
+        }
+
+        if (stateCode == null) {
+            return new NameMatch(null, "state '" + wantedState + "' is not in the directory");
+        }
+
+        /*
+          A ULB code may appear under several districts; within one state that
+          is an ambiguity the backfill must not resolve on its own.
+        */
+        Map<String, Set<String>> districtsOfUlb = new LinkedHashMap<>();
+        String matchedUlbName = null;
+
+        for (Map.Entry<String, String> entry : ulbNames.entrySet()) {
+
+            if (!entry.getKey().startsWith(stateCode + "/")) {
+                continue;
+            }
+            if (!LocationUtil.normalizeLocation(entry.getValue()).equals(wantedCity)) {
+                continue;
+            }
+
+            String[] codes = entry.getKey().split("/");
+            districtsOfUlb.computeIfAbsent(codes[2], code -> new LinkedHashSet<>()).add(codes[1]);
+            matchedUlbName = entry.getValue();
+        }
+
+        String stateDisplay = stateNames.get(stateCode);
+
+        if (matchedUlbName == null) {
+            return new NameMatch(null, "no directory ULB named '" + wantedCity + "' in " + stateDisplay);
+        }
+
+        if (districtsOfUlb.size() > 1
+                || districtsOfUlb.values().iterator().next().size() > 1) {
+            return new NameMatch(null, "ULB '" + wantedCity + "' is listed under several districts of "
+                    + stateDisplay);
+        }
+
+        String ulbCode = districtsOfUlb.keySet().iterator().next();
+        String districtCode = districtsOfUlb.values().iterator().next().iterator().next();
+
+        return new NameMatch(
+                new ResolvedLocation(
+                        LocationUtil.normalizeLocation(stateDisplay),
+                        LocationUtil.normalizeLocation(districtNames.get(stateCode + "/" + districtCode)),
+                        LocationUtil.normalizeLocation(matchedUlbName),
+                        ulbCode),
+                null);
+    }
+
+    /**
+     * One reverse lookup by stored names: either an unambiguous directory
+     * location, or a reason for the audit worklist (never both).
+     */
+    public record NameMatch(ResolvedLocation location, String reason) {
+
+        /** True when the pair was mapped to exactly one directory entry. */
+        public boolean mapped() {
+            return location != null;
+        }
     }
 
     /**
@@ -242,11 +352,13 @@ public class IndianLocationService {
     }
 
     /**
-     * A validated selection, ready to store on the existing User columns.
+     * A validated selection, ready to store on the location columns.
      *
-     * @param state canonical state name, in LocationUtil shape
-     * @param city  the workbook's ULB name, in LocationUtil shape
+     * @param state    canonical state name, in LocationUtil shape
+     * @param district canonical district name, in LocationUtil shape
+     * @param city     the workbook's ULB name, in LocationUtil shape
+     * @param ulbCode  the directory's ULB code, for authoritative routing
      */
-    public record ResolvedLocation(String state, String city) {
+    public record ResolvedLocation(String state, String district, String city, String ulbCode) {
     }
 }

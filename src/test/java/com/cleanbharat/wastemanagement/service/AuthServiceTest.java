@@ -104,12 +104,13 @@ class AuthServiceTest {
                 .when(userRepository.save(any(User.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
-        // The real service answers these codes with Punjab and Mohali - in the
-        // LocationUtil shape it stores, acronym folded - stubbed here so these
-        // tests stay about account rules rather than about the dataset.
+        // The real service answers these codes with Punjab, the S.A.S Nagar
+        // district, Mohali and its ULB code - in the LocationUtil shape it
+        // stores, acronym folded - stubbed here so these tests stay about
+        // account rules rather than about the dataset.
         org.mockito.Mockito.lenient()
                 .when(indianLocationService.resolve("3", "608", "248325"))
-                .thenReturn(new ResolvedLocation("Punjab", "S.a.s.nagar - Mohali"));
+                .thenReturn(new ResolvedLocation("Punjab", "S.a.s Nagar", "S.a.s.nagar - Mohali", "248325"));
     }
 
     // ---------------------------------------------------------------------

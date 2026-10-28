@@ -199,6 +199,11 @@ class RegistrationLocationContractTest {
         verify(userRepository).save(saved.capture());
         assertEquals("Bihar", saved.getValue().getState());
         assertEquals("Gaya", saved.getValue().getCity());
+        // The district is persisted separately from the ULB, and the ULB code
+        // travels with the account: district-level features match on the
+        // (state, district) pair, routing uses the code
+        assertEquals("Gaya", saved.getValue().getDistrict());
+        assertEquals("249680", saved.getValue().getUlbCode());
     }
 
     @Test

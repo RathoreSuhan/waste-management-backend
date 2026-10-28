@@ -600,6 +600,8 @@ Each report stores:
 - Landmark
 - City
 - State
+- District
+- ULB Code
 - Pincode
 - Current Status
 - Urgency Score
@@ -612,6 +614,13 @@ The reporting workflow is:
 Citizen
       │
       ▼
+Location Resolved            (directory cascade; legacy free text
+      │                       keeps the old path)
+      ▼
+Municipal Destination        (code-backed reports: resolved by ULB
+Check                        code BEFORE any upload; a ULB nobody
+      │                      has onboarded is refused here with an
+      ▼                      actionable error and no partial report)
 Upload Image
       │
       ▼
@@ -625,9 +634,88 @@ Cloudinary Upload
       │
       ▼
 Garbage Report Created
+      │
+      ▼
+Cleanup Assignment           (code-backed reports carry the already-
+                              resolved destination; legacy reports are
+                              routed by stored city, case-insensitively)
 ```
 
 The report becomes the central entity used by almost every module in the application.
+
+---
+
+# 📍 Location Model: State → District → ULB
+
+Every place in Clean Bharat comes from the LGD-based directory
+(`locations/india-ulb-directory.json`, served by `GET /api/locations`).
+Registration has always validated a `stateCode/districtCode/ulbCode` triple;
+the location refactor makes the rest of the platform directory-backed too.
+
+## What is stored
+
+| Table | Columns | Meaning |
+|---|---|---|
+| `users` | `state`, `city` (ULB name), **`district`**, **`ulb_code`** | The account's registered place. `district`/`ulb_code` are NULL only on accounts created before the refactor, until reconciled. |
+| `garbage_reports` | `state`, `city`, **`district`**, **`ulb_code`** | Code-backed reports (directory cascade) store the directory's canonical names plus the code; legacy reports keep their free-text values untouched. |
+| `municipal_corporations` | `city`, **`ulb_code`** (unique) | `city` is the service-area display name, preserved verbatim; `ulb_code` is what code-backed reports route by. Mapping an office to a ULB never rewrites its `city`. |
+
+## Routing, eligibility and leaderboards
+
+- **Municipal routing is per report.** A report carrying a ULB code routes by
+  that code and only by that code - the destination is resolved before any
+  expensive work, and a miss is a loud 404 that names the municipal area
+  ("not onboarded yet"), never a reroute to another corporation and never a
+  city-alias guess. A legacy report without a code resolves its destination
+  from the stored city, case-insensitively, exactly as it always has.
+- **Cleaner eligibility is district-wide and fail-closed.** A cleaner may work
+  on eligible reports in any ULB inside their registered district, and never
+  outside it. A missing district on either the account or the report means
+  the pair is simply not eligible - there is no city-string fallback.
+- **Leaderboards have four scopes.** National, state and city keep their
+  exact existing behavior; the district board (`GET
+  /api/leaderboard/district/{state}/{district}`) aggregates every ULB inside
+  one district and is keyed on the (state, district) pair, so identically
+  named districts in different states never merge. The city endpoint is
+  retained until a documented cleanup confirms no client still calls it.
+
+## Migration (operator-runbook, T0–T5)
+
+No DDL and no backfill ever runs during ordinary application startup. The
+whole sequence is operator-controlled:
+
+1. **T0 - build only.** The new artifact is built, nothing is deployed.
+2. **T1 - migrate.** Backup → read-only preflight audits → run
+   `db/add-location-columns.sql` (additive) → boot the new artifact ONCE with
+   `cleanbharat.db.location-migration.enabled=true`. The runner backfills
+   **`users` and `garbage_reports` only** (both carry a verifiable state) and
+   writes every row it cannot map - ambiguous or unmatched - to the
+   `location_backfill_audit` table. It never writes
+   `municipal_corporations.ulb_code`: that table has no state column, so a
+   city-name match alone could cross states. Corporations are mapped at T3.
+3. **T2 - deploy with the flag off.** The old report form keeps working and
+   behavior is identical to before; the new cascade form and the district
+   leaderboard tab ship dark behind `VITE_LOCATION_V2_ENABLED=false`.
+4. **T3 - map the corporations.** Every existing Municipal Corporation is
+   mapped to its ULB through the admin cascade or a reviewed UPDATE - its
+   stored `city` is preserved untouched. Preflight checks: unique ULB codes
+   per corporation, and every state+city among the last 30 days of reports
+   resolves to a mapped corporation. This preflight covers the explicitly
+   audited locations only, not all 5,059 directory ULBs.
+5. **T4 - cutover.** Flip `VITE_LOCATION_V2_ENABLED=true` (frontend redeploy).
+   New reports are code-backed and route by ULB code; a valid but
+   not-yet-onboarded ULB is a clean, communicated refusal.
+6. **T5 - reconcile.** Work through `location_backfill_audit`, mapping each
+   legacy row against the LGD workbook with targeted verified UPDATEs.
+   Unmapped rows stay NULL, remain ineligible for district-restricted work,
+   and are never authorized by a fallback.
+
+**Rollback.** Flipping the frontend flag off and/or redeploying the previous
+backend artifact never drops the new columns - every written mapping is
+preserved. The schema rollback script (`db/rollback-location-columns.sql`) may
+drop them only before any meaningful writes (genuinely loss-free) or, after
+mappings exist, only with a fresh dedicated backup and explicit approval -
+dropping populated columns is destructive and is never "data-loss-free".
 
 ---
 

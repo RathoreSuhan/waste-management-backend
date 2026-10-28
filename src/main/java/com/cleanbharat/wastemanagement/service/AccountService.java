@@ -135,6 +135,7 @@ public class AccountService {
                 .organizationName(user.getOrganizationName())
                 .state(user.getState())
                 .city(user.getCity())
+                .district(user.getDistrict())
                 .rewardPoints(user.getRewardPoints())
                 .completedCleanups(completedCleanups)
                 .reportsCreated(garbageReportRepository.countByUser(user))

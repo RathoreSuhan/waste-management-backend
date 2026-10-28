@@ -34,4 +34,12 @@ public interface LeaderboardService {
      * of a particular city.
      */
     LeaderboardResponse getCityLeaderboard(String city);
+
+    /**
+     * Returns Top 10 cleaners of a district, aggregating every ULB inside
+     * it. Both the state and the district are required: two different states
+     * can name a district the same way, so the (state, district) pair is
+     * what identifies one board.
+     */
+    LeaderboardResponse getDistrictLeaderboard(String state, String district);
 }

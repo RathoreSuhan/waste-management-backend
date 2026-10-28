@@ -31,6 +31,7 @@ public class CleanupProposalResponse {
     private String reportTitle;
     private String address;
     private String city;
+    private String district; // district of the site (null on legacy reports)
     private String assignmentStatus;
 
     // Who is offering. The municipal officer compares competing cleaners, so the

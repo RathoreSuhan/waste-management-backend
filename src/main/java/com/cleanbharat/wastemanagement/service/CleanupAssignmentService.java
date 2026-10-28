@@ -3,14 +3,29 @@ package com.cleanbharat.wastemanagement.service;
 import com.cleanbharat.wastemanagement.dto.CleanupAssignmentResponse;
 import com.cleanbharat.wastemanagement.dto.ai.CleanupValidationResponse;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
+import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
 public interface CleanupAssignmentService {
 
-    // Creates default assignment after report creation
+    // Creates default assignment after report creation, resolving the
+    // destination from the report's stored city (legacy free-text reports)
     void createDefaultAssignment(GarbageReport report);
+
+    /**
+     * Creates the default assignment with a destination that was already
+     * resolved: code-backed reports find their Municipal Corporation by ULB
+     * code before any expensive work runs, so the resolved office is handed
+     * in rather than looked up again.
+     *
+     * @param preResolvedDestination the corporation found for the report's
+     *                              ULB code; when null the destination falls
+     *                              back to the report's stored city exactly
+     *                              as {@link #createDefaultAssignment} does
+     */
+    void createDefaultAssignment(GarbageReport report, MunicipalCorporation preResolvedDestination);
 
     // claimAssignment() removed: cleaners now submit proposals for municipal approval
 

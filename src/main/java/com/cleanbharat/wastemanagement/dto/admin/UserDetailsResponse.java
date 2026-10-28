@@ -41,6 +41,7 @@ public class UserDetailsResponse {
     // User location
     private String state;
     private String city;
+    private String district; // null on pre-directory accounts, until reconciled
 
     // Reward points
     @Builder.Default

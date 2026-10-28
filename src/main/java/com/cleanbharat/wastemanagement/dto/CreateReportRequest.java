@@ -75,21 +75,40 @@ public class CreateReportRequest {
     )
     private String landmark; // nearby landmark (optional)
 
-    @NotBlank(message = "City is required")
+    /*
+      Where the report is, as free text from the legacy form. Optional only
+      because the directory-cascade form sends the three LGD codes below
+      instead - the service enforces that exactly one of the two shapes is
+      present, and code-backed submissions overwrite these with the canonical
+      directory names.
+    */
     @Size(
-            min = 2,
             max = 100,
-            message = "City must be between 2 and 100 characters"
+            message = "City must be at most 100 characters"
     )
-    private String city; // city name
+    private String city; // city name (legacy free-text path)
 
-    @NotBlank(message = "State is required")
     @Size(
-            min = 2,
             max = 100,
-            message = "State must be between 2 and 100 characters"
+            message = "State must be at most 100 characters"
     )
-    private String state; // state name
+    private String state; // state name (legacy free-text path)
+
+    /*
+      Where the report is, as three LGD codes - the same contract registration
+      uses. All three must be sent together and are validated against the
+      bundled directory; the stored city/state are then the directory's
+      canonical names, and the ULB code is what routes the report to the one
+      Municipal Corporation configured for it.
+    */
+    @Size(max = 20, message = "State code is not valid")
+    private String stateCode;
+
+    @Size(max = 20, message = "District code is not valid")
+    private String districtCode;
+
+    @Size(max = 20, message = "City or municipal-area code is not valid")
+    private String ulbCode;
 
     @NotBlank(message = "Pincode is required")
     @Pattern(

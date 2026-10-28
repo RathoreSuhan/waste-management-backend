@@ -25,9 +25,17 @@ public class ReportResponse {
 
     private String landmark; // nearby landmark
 
-    private String city; // city name
+    private String city; // city name (for code-backed reports: the directory's ULB name)
 
     private String state; // state name
+
+    // District of the reported site (null on legacy reports filed before the
+    // directory cascade existed)
+    private String district;
+
+    // LGD ULB code behind this report's city (null on legacy reports); it is
+    // what routed the report to its Municipal Corporation
+    private String ulbCode;
 
     private String pincode; // postal code
 

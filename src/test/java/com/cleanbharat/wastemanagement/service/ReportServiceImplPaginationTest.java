@@ -46,6 +46,8 @@ class ReportServiceImplPaginationTest {
 
     @Mock private GarbageReportRepository reportRepository;
     @Mock private UserRepository userRepository;
+    @Mock private com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository municipalCorporationRepository;
+    @Mock private com.cleanbharat.wastemanagement.service.location.IndianLocationService indianLocationService;
     @Mock private CloudinaryService cloudinaryService;
     @Mock private CleanupAssignmentService cleanupAssignmentService;
     @Mock private AIReportValidationService aiReportValidationService;
@@ -60,6 +62,8 @@ class ReportServiceImplPaginationTest {
         reportService = new ReportServiceImpl(
                 reportRepository,
                 userRepository,
+                municipalCorporationRepository,
+                indianLocationService,
                 cloudinaryService,
                 cleanupAssignmentService,
                 new ReportMapper(),

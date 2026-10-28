@@ -4,9 +4,12 @@ import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
 import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.exception.EmailAlreadyExistsException;
+import com.cleanbharat.wastemanagement.exception.InvalidRegistrationException;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService.ResolvedLocation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,6 +24,7 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
     private final MunicipalCorporationRepository municipalCorporationRepository;
     private final UserRepository userRepository;   // citizen/cleaner accounts share the same email space
     private final PasswordEncoder passwordEncoder; // corporation passwords are stored hashed, never in plain text
+    private final IndianLocationService indianLocationService; // validates the directory triple on the cascade path
 
     /**
      * Password every newly registered corporation starts with.
@@ -35,16 +39,36 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         // The email is this corporation's login id, so it must be unique everywhere
         assertEmailIsFree(request.getEmail(), null);
 
-        MunicipalCorporation municipalCorporation = MunicipalCorporation.builder()
-                        .city(request.getCity())
-                        .organizationName(request.getOrganizationName())
-                        .phone(request.getPhone())
-                        .email(request.getEmail())
-                        // Admin never types a password: the city body starts on the shared default
-                        .password(passwordEncoder.encode(DEFAULT_MUNICIPAL_PASSWORD))
-                        .build();
+        /*
+          Two accepted shapes. The directory cascade (preferred) resolves the
+          three LGD codes into the canonical ULB name + code and guarantees one
+          corporation per ULB; the legacy shape stores the free-text city
+          verbatim, exactly as the old admin form always did.
+        */
+        ResolvedLocation location = resolveLocationOrCity(request);
 
-        MunicipalCorporation savedMunicipalCorporation = municipalCorporationRepository.save(municipalCorporation);
+        MunicipalCorporation.MunicipalCorporationBuilder builder = MunicipalCorporation.builder()
+                .organizationName(request.getOrganizationName())
+                .phone(request.getPhone())
+                .email(request.getEmail())
+                // Admin never types a password: the city body starts on the shared default
+                .password(passwordEncoder.encode(DEFAULT_MUNICIPAL_PASSWORD));
+
+        if (location != null) {
+
+            if (municipalCorporationRepository.existsByUlbCode(location.ulbCode())) {
+                throw new InvalidRegistrationException(
+                        "A Municipal Corporation is already registered for \""
+                                + location.city() + "\" (ULB " + location.ulbCode() + ").");
+            }
+
+            builder.city(location.city()).ulbCode(location.ulbCode());
+        } else {
+            builder.city(request.getCity()); // legacy verbatim, no code
+        }
+
+        MunicipalCorporation savedMunicipalCorporation =
+                municipalCorporationRepository.save(builder.build());
 
         return mapToResponse(savedMunicipalCorporation);
     }
@@ -108,12 +132,7 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         // Contact details may be corrected freely, but the login id must stay unique
         assertEmailIsFree(request.getEmail(), municipalCorporation.getId());
 
-        municipalCorporation.setCity(request.getCity());
-        municipalCorporation.setOrganizationName(request.getOrganizationName());
-        municipalCorporation.setPhone(request.getPhone());
-        municipalCorporation.setEmail(request.getEmail());
-        // Password is deliberately untouched here: editing a phone number must not
-        // silently reset a corporation that has already chosen its own password.
+        applyUpdate(municipalCorporation, request, municipalCorporation.getId());
 
         MunicipalCorporation updatedMunicipalCorporation = municipalCorporationRepository.save(municipalCorporation);
 
@@ -133,12 +152,88 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         MunicipalCorporation municipalCorporation = findCorporationByEmail(email);
         assertEmailIsFree(request.getEmail(), municipalCorporation.getId());
 
-        municipalCorporation.setCity(request.getCity());
+        applyUpdate(municipalCorporation, request, municipalCorporation.getId());
+
+        return mapToResponse(municipalCorporationRepository.save(municipalCorporation));
+    }
+
+    /*
+     * One update rule for both entry points (plan rule v4-1):
+     *
+     * When the request carries the directory codes, it is a ULB mapping: the
+     * row gains its ulb_code (uniqueness-guarded) while the stored city is
+     * left EXACTLY as it is - legacy NULL-code reports still route through
+     * that value, so "Mohali" must never become "S.a.s.nagar - Mohali" as a
+     * side effect of a mapping. When no codes are sent, the legacy free-text
+     * shape applies and city is updated from the request, exactly as the old
+     * form (which round-trips the stored value) always behaved.
+     */
+    private void applyUpdate(MunicipalCorporation municipalCorporation,
+                             MunicipalCorporationRequest request,
+                             Long selfId) {
+
+        ResolvedLocation location = resolveLocationOrCity(request);
+
+        if (location != null) {
+
+            if (municipalCorporationRepository.existsByUlbCodeAndIdNot(location.ulbCode(), selfId)) {
+                throw new InvalidRegistrationException(
+                        "A Municipal Corporation is already registered for \""
+                                + location.city() + "\" (ULB " + location.ulbCode() + ").");
+            }
+
+            municipalCorporation.setUlbCode(location.ulbCode());
+            // city deliberately untouched: see v4-1 above
+
+        } else {
+            municipalCorporation.setCity(request.getCity()); // legacy verbatim
+        }
+
         municipalCorporation.setOrganizationName(request.getOrganizationName());
         municipalCorporation.setPhone(request.getPhone());
         municipalCorporation.setEmail(request.getEmail());
+        // Password is deliberately untouched here: editing a phone number must not
+        // silently reset a corporation that has already chosen its own password.
+    }
 
-        return mapToResponse(municipalCorporationRepository.save(municipalCorporation));
+    /**
+     * Validates the request's location shape: either the three LGD codes
+     * together (resolved against the directory) or a legacy free-text city.
+     *
+     * @return the resolved location on the cascade path, or null on the
+     *         legacy path
+     */
+    private ResolvedLocation resolveLocationOrCity(MunicipalCorporationRequest request) {
+
+        boolean hasCodes = hasText(request.getStateCode())
+                || hasText(request.getDistrictCode())
+                || hasText(request.getUlbCode());
+
+        if (!hasCodes) {
+
+            if (!hasText(request.getCity())) {
+                throw new InvalidRegistrationException(
+                        "Select the corporation's state, district and city/municipal area "
+                                + "(or send its legacy city name).");
+            }
+
+            return null;
+        }
+
+        if (!hasText(request.getStateCode()) || !hasText(request.getDistrictCode())
+                || !hasText(request.getUlbCode())) {
+            throw new InvalidRegistrationException(
+                    "State, district and city/municipal-area codes must be sent together.");
+        }
+
+        return indianLocationService.resolve(
+                request.getStateCode(),
+                request.getDistrictCode(),
+                request.getUlbCode());
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     // Removing a city body retires its cached overview along with it
@@ -188,6 +283,7 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         return MunicipalCorporationResponse.builder()
                 .id(municipalCorporation.getId())
                 .city(municipalCorporation.getCity())
+                .ulbCode(municipalCorporation.getUlbCode())
                 .organizationName(municipalCorporation.getOrganizationName())
                 .phone(municipalCorporation.getPhone())
                 .email(municipalCorporation.getEmail())

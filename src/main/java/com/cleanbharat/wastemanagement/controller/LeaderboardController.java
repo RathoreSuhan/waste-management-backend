@@ -49,6 +49,19 @@ public class LeaderboardController {
     }
 
     /**
+     * Returns Top 10 cleaners of the requested district, aggregating every
+     * ULB inside it. Accessible by anyone. Both parts are required because
+     * different states can name a district the same way.
+     */
+    @GetMapping("/district/{state}/{district}")
+    public LeaderboardResponse getDistrictLeaderboard(
+            @PathVariable String state,
+            @PathVariable String district
+    ) {
+        return leaderboardService.getDistrictLeaderboard(state, district);
+    }
+
+    /**
      * Returns logged-in cleaner's personal leaderboard details.
      * Accessible only after login.
      */

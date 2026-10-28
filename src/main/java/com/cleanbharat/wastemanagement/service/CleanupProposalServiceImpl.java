@@ -266,15 +266,29 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
         }
     }
 
-    // Cleaners work only inside their registered jurisdiction
+    /*
+     * Cleaners work only inside their registered district - every supported
+     * ULB within it. Fail-closed: a missing district on the account or the
+     * report means the restriction cannot be proven, so the proposal is
+     * refused with a message that says so rather than matched on a city
+     * string (which could authorize work in a different district entirely).
+     */
     private void validateCleanerLocation(User cleaner, GarbageReport report) {
+
+        if (cleaner.getDistrict() == null || report.getDistrict() == null) {
+            throw new UnauthorizedAssignmentAccessException(
+                    "Your work area cannot be verified because the district is missing on this "
+                            + "account or report. Cleanup work is restricted by district, so the "
+                            + "location needs to be reconciled first - please contact support.");
+        }
+
         if (!cleaner.getState().equalsIgnoreCase(report.getState())) {
             throw new UnauthorizedAssignmentAccessException(
                     "You can only propose cleanups within your assigned state.");
         }
-        if (!cleaner.getCity().equalsIgnoreCase(report.getCity())) {
+        if (!cleaner.getDistrict().equalsIgnoreCase(report.getDistrict())) {
             throw new UnauthorizedAssignmentAccessException(
-                    "You can only propose cleanups within your assigned city.");
+                    "You can only propose cleanups within your registered district.");
         }
     }
 
@@ -444,6 +458,7 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
                 .reportTitle(report.getTitle())
                 .address(report.getAddress())
                 .city(report.getCity())
+                .district(report.getDistrict())
                 .assignmentStatus(assignment.getStatus() != null ? assignment.getStatus().name() : null)
                 .cleanerId(proposal.getCleaner().getId())
                 .cleanerName(proposal.getCleaner().getName())

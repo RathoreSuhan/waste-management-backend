@@ -49,10 +49,12 @@ class IndianLocationServiceTest {
     void aWorkbookTripleResolvesToTheCanonicalNames() {
         ResolvedLocation location = service.resolve("10", "196", "249680");
 
-        // District and ULB codes were proof, not data: resolve() answers only
-        // the two names that get stored on the user row
+        // The names get stored on the user/report rows; the ULB code is what
+        // routes a report to the Municipal Corporation configured for it
         assertEquals("Bihar", location.state());
+        assertEquals("Gaya", location.district());
         assertEquals("Gaya", location.city());
+        assertEquals("249680", location.ulbCode());
     }
 
     @Test
@@ -61,11 +63,16 @@ class IndianLocationServiceTest {
         // and the repository matches exactly, so a stored value has to be in
         // that same shape. LocationUtil title-cases word by word - it lowercases
         // first - so the workbook's "S.A.S.Nagar - Mohali" is stored with its
-        // acronym folded, exactly as a typed "S.A.S NAGAR" always was.
+        // acronym folded, exactly as a typed "S.A.S NAGAR" always was. The
+        // district name comes back in that same shape for the district board.
         ResolvedLocation location = service.resolve("3", "608", "248325");
 
         assertEquals("Punjab", location.state());
+        // The district's workbook name is "S.A.S Nagar" (spaced, unlike the
+        // ULB name "S.A.S.Nagar - Mohali"), so its normalised shape differs
+        assertEquals("S.a.s Nagar", location.district());
         assertEquals("S.a.s.nagar - Mohali", location.city());
+        assertEquals("248325", location.ulbCode());
     }
 
     @Test
@@ -225,6 +232,44 @@ class IndianLocationServiceTest {
         assertTrue(refused.getMessage().contains("Lakshadweep"), refused.getMessage());
     }
 
+    // ------------------------------------------------------------------
+    // Reverse name matching (offline backfill only - never request validation)
+    // ------------------------------------------------------------------
+
+    @Test
+    void aRecognisedStateAndCityNameMapsBackToTheDirectoryEntry() {
+        var match = service.matchByNames("Punjab", "S.a.s.nagar - Mohali");
+
+        assertTrue(match.mapped(), match.reason());
+        assertEquals("Punjab", match.location().state());
+        assertEquals("S.a.s Nagar", match.location().district());
+        assertEquals("S.a.s.nagar - Mohali", match.location().city());
+        assertEquals("248325", match.location().ulbCode());
+    }
+
+    @Test
+    void aNameThatMatchesNoDirectoryUlbIsNotGuessedAt() {
+        var match = service.matchByNames("Bihar", "Patna City");
+
+        // Fail-closed: the backfill audits the row instead of inventing a mapping
+        assertEquals(null, match.location());
+        assertTrue(match.reason().contains("no directory ULB named"), match.reason());
+    }
+
+    @Test
+    void aStateThatIsNotInTheDirectoryIsRefused() {
+        var match = service.matchByNames("Middle Earth", "Gaya");
+
+        assertEquals(null, match.location());
+        assertTrue(match.reason().contains("not in the directory"), match.reason());
+    }
+
+    @Test
+    void blankNamesAreRefused() {
+        assertEquals(null, service.matchByNames(null, "Gaya").location());
+        assertEquals(null, service.matchByNames("Bihar", "  ").location());
+    }
+
     private static JsonNode stateByCode(String code) {
         for (JsonNode state : directory.path("states")) {
             if (code.equals(state.path("code").asText())) {
@@ -240,7 +285,7 @@ class IndianLocationServiceTest {
         // unavailable, never answered with a permissive default.
         IndianLocationService broken = new IndianLocationService(new ObjectMapper()) {
             @Override
-            void load() {
+            public void load() {
                 // Deliberately never loads
             }
         };

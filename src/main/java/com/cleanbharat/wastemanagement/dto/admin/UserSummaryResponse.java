@@ -34,8 +34,11 @@ public class UserSummaryResponse {
     // User's state
     private String state;
 
-    // User's city
+    // User's city (the directory's ULB name)
     private String city;
+
+    // User's district (null on pre-directory accounts, until reconciled)
+    private String district;
 
     // Total reward points
     @Builder.Default

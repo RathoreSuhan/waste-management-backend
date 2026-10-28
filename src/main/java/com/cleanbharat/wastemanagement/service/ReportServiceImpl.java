@@ -5,11 +5,13 @@ import com.cleanbharat.wastemanagement.dto.MyReportSummaryResponse;
 import com.cleanbharat.wastemanagement.dto.ReportResponse;
 import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 import com.cleanbharat.wastemanagement.entity.GarbageReport;
+import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.ReportStatus;
 import com.cleanbharat.wastemanagement.exception.InvalidReportCreationException;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.GarbageReportRepository;
+import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.mapper.ReportMapper;
@@ -17,6 +19,8 @@ import com.cleanbharat.wastemanagement.util.LocationUtil;
 import com.cleanbharat.wastemanagement.util.PaginationUtil;
 import com.cleanbharat.wastemanagement.dto.ai.AIReportValidationResponse;
 import com.cleanbharat.wastemanagement.service.ai.AIReportValidationService;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService.ResolvedLocation;
 import com.cleanbharat.wastemanagement.service.location.ReportDuplicateValidationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +56,8 @@ public class ReportServiceImpl implements ReportService {
 
     private final GarbageReportRepository reportRepository; // report repo
     private final UserRepository userRepository; // user repo
+    private final MunicipalCorporationRepository municipalCorporationRepository; // resolves a report's destination
+    private final IndianLocationService indianLocationService; // validates the directory triple on code-backed reports
     private final CloudinaryService cloudinaryService; // cloudinary service for image upload
     private final CleanupAssignmentService cleanupAssignmentService; // service to create cleanup assignment
     private final ReportMapper reportMapper; // Shared mapper for Report -> DTO conversion
@@ -123,12 +129,33 @@ public class ReportServiceImpl implements ReportService {
 
         /*
          * Step 1
-         * Clean up the submitted location text.
+         * Clean up the submitted location text and work out where the report
+         * is and where it must go.
          *
-         * Done before anything else so the duplicate check and the saved row
-         * both work on the same values.
+         * Code-backed submissions (the directory cascade) carry the three LGD
+         * codes: they are validated against the directory and their municipal
+         * destination is resolved HERE - before AI validation, the duplicate
+         * check and the Cloudinary upload - so a ULB nobody has onboarded is
+         * refused cheaply, with an actionable message and no partial report.
+         * Legacy submissions carry free-text city/state and keep today's
+         * behaviour: their destination is resolved when the default assignment
+         * is created, after the upload.
          */
         normalizeLocationFields(request);
+
+        ResolvedLocation location = resolveReportLocation(request);
+
+        MunicipalCorporation destination = null;
+
+        if (location != null) {
+            destination = municipalCorporationRepository.findByUlbCode(location.ulbCode())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "The Municipal Corporation for \"" + location.city()
+                                    + "\" (ULB " + location.ulbCode()
+                                    + ") is not onboarded yet, so this report cannot be filed. "
+                                    + "Your report was not saved - please choose another municipal "
+                                    + "area or check back later."));
+        }
 
         /*
          * Step 2
@@ -153,7 +180,9 @@ public class ReportServiceImpl implements ReportService {
 
             /*
              * Step 5
-             * Create report entity.
+             * Create report entity. Code-backed submissions store the
+             * directory's canonical names plus the district and ULB code;
+             * legacy submissions store the free text exactly as before.
              */
             GarbageReport report = GarbageReport.builder()
                     .title(request.getTitle())
@@ -162,8 +191,10 @@ public class ReportServiceImpl implements ReportService {
                     .longitude(request.getLongitude())
                     .address(request.getAddress())
                     .landmark(request.getLandmark())
-                    .city(request.getCity())
-                    .state(request.getState())
+                    .city(location != null ? location.city() : request.getCity())
+                    .state(location != null ? location.state() : request.getState())
+                    .district(location != null ? location.district() : null)
+                    .ulbCode(location != null ? location.ulbCode() : null)
                     .pincode(request.getPincode())
 
                     // AI detected garbage category
@@ -183,9 +214,11 @@ public class ReportServiceImpl implements ReportService {
 
             /*
              * Step 7
-             * Automatically create cleanup assignment.
+             * Automatically create cleanup assignment, handing in the
+             * destination already resolved for code-backed reports (null on
+             * the legacy path, which routes by stored city as always).
              */
-            cleanupAssignmentService.createDefaultAssignment(savedReport);
+            cleanupAssignmentService.createDefaultAssignment(savedReport, destination);
             log.info("Cleanup assignment created successfully.");
 
             return reportMapper.toResponse(savedReport);
@@ -201,23 +234,72 @@ public class ReportServiceImpl implements ReportService {
     }
 
     /**
+     * Works out where the report is, from one of the two accepted shapes.
+     *
+     * Code-backed: the three LGD codes must arrive together and describe one
+     * real directory place (invalid combinations are refused here, before any
+     * expensive work). Legacy: free-text city and state, exactly as the old
+     * form sent them.
+     *
+     * @return the validated directory location, or null on the legacy path
+     */
+    private ResolvedLocation resolveReportLocation(CreateReportRequest request) {
+
+        boolean hasCodes = hasText(request.getStateCode())
+                || hasText(request.getDistrictCode())
+                || hasText(request.getUlbCode());
+
+        if (!hasCodes) {
+
+            if (!hasText(request.getCity()) || !hasText(request.getState())) {
+                throw new InvalidReportCreationException(
+                        "City and state are required when no location codes are sent.");
+            }
+
+            return null; // Legacy free-text report: no district, no ULB code
+        }
+
+        if (!hasText(request.getStateCode()) || !hasText(request.getDistrictCode())
+                || !hasText(request.getUlbCode())) {
+            throw new InvalidReportCreationException(
+                    "State, district and city/municipal-area codes must be sent together.");
+        }
+
+        // Answers 400 for any combination the directory does not list
+        return indianLocationService.resolve(
+                request.getStateCode(),
+                request.getDistrictCode(),
+                request.getUlbCode());
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /**
      * Brings the submitted location text to a consistent shape.
      *
      * City and state are title-cased the same way they are for users at
      * registration, so "kolkata", "Kolkata" and "KOLKATA" all become the one
      * value. Reports are grouped and matched by city, so without this the
-     * same place would split into several distinct entries.
+     * same place would split into several distinct entries. On code-backed
+     * submissions these fields are absent (the directory supplies the names),
+     * so there is nothing to normalise.
      *
      * Only whitespace is stripped from the address, landmark and pincode,
      * since those are free text rather than grouping keys.
      *
-     * Blank fields are already rejected by the bean constraints on
-     * CreateReportRequest, so city and state are safe to normalize here.
+     * Blank fields are already rejected before this runs where they are
+     * required, so city and state are safe to normalize here.
      */
     private void normalizeLocationFields(CreateReportRequest request) {
 
-        request.setCity(LocationUtil.normalizeLocation(request.getCity()));
-        request.setState(LocationUtil.normalizeLocation(request.getState()));
+        if (hasText(request.getCity())) {
+            request.setCity(LocationUtil.normalizeLocation(request.getCity()));
+        }
+        if (hasText(request.getState())) {
+            request.setState(LocationUtil.normalizeLocation(request.getState()));
+        }
 
         request.setAddress(request.getAddress().trim());
         request.setPincode(request.getPincode().trim());

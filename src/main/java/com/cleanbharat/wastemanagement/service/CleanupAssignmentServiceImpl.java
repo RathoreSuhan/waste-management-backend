@@ -85,18 +85,42 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
     @Override
     public void createDefaultAssignment(GarbageReport report) {
+        createDefaultAssignment(report, null);
+    }
+
+    /*
+     * Routing is per report (plan rule for the location refactor):
+     *
+     *   - A report carrying a ULB code is routed ONLY by that code - the
+     *     destination was resolved before this call and is handed in, so a
+     *     miss was already refused up front and can never fall through to a
+     *     city-name match or a different corporation.
+     *   - A legacy report without a code resolves its destination from the
+     *     stored city exactly as it always has, case-insensitively.
+     *
+     * Either way a missing destination is a loud 404 that shares this
+     * transaction with the caller, rolling the report insert back.
+     */
+    @Override
+    public void createDefaultAssignment(GarbageReport report, MunicipalCorporation preResolvedDestination) {
 
         // Prevent duplicate assignment creation
         if (assignmentRepository.existsByReport(report)) {
             return;
         }
 
-        // Find Municipal Corporation based on report city
-        MunicipalCorporation municipalCorporation =
-                municipalRepository.findByCityIgnoreCase(report.getCity())
-                        .orElseThrow(() -> new ResourceNotFoundException(
-                                        "No Municipal Corporation found for city: "
-                                                + report.getCity()));
+        MunicipalCorporation municipalCorporation;
+
+        if (preResolvedDestination != null) {
+            municipalCorporation = preResolvedDestination;
+        } else {
+            // Find Municipal Corporation based on report city
+            municipalCorporation =
+                    municipalRepository.findByCityIgnoreCase(report.getCity())
+                            .orElseThrow(() -> new ResourceNotFoundException(
+                                            "No Municipal Corporation found for city: "
+                                                    + report.getCity()));
+        }
 
         CleanupAssignment assignment = CleanupAssignment.builder()
                 .report(report)
@@ -422,19 +446,8 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 .findByCleanerIsNullAndStatusInOrderByIdDesc(OPEN_FOR_PROPOSAL_STATUSES)
                 .stream()
 
-                // Same state
-                .filter(assignment ->
-                        cleaner.getState().equalsIgnoreCase(
-                                assignment.getReport().getState()
-                        )
-                )
-
-                // Same city
-                .filter(assignment ->
-                        cleaner.getCity().equalsIgnoreCase(
-                                assignment.getReport().getCity()
-                        )
-                )
+                // Same district, any ULB inside it
+                .filter(assignment -> eligibleForDistrictWork(cleaner, assignment.getReport()))
 
                 // Entity -> DTO
                 .map(this::mapToResponse)
@@ -490,7 +503,8 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
         /*
          * Current implementation:
-         * Nearby means same city & state.
+         * Nearby means the cleaner's registered district - every supported
+         * ULB inside it, not just their own.
          *
          * Future implementation:
          * Filter further using cleaner GPS
@@ -500,19 +514,8 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 .findByCleanerIsNullAndStatusInOrderByIdDesc(OPEN_FOR_PROPOSAL_STATUSES)
                 .stream()
 
-                // Same state
-                .filter(assignment ->
-                        cleaner.getState().equalsIgnoreCase(
-                                assignment.getReport().getState()
-                        )
-                )
-
-                // Same city
-                .filter(assignment ->
-                        cleaner.getCity().equalsIgnoreCase(
-                                assignment.getReport().getCity()
-                        )
-                )
+                // Same district, any ULB inside it
+                .filter(assignment -> eligibleForDistrictWork(cleaner, assignment.getReport()))
 
                 // Entity -> DTO
                 .map(this::mapToResponse)
@@ -568,24 +571,22 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
 
 
     /**
-     * Ensures that a cleaner can only claim
-     * assignments within their own city and state.
+     * District-restricted work eligibility, fail-closed.
+     *
+     * A cleaner may act on eligible reports anywhere inside their REGISTERED
+     * DISTRICT - every supported ULB in it - but never outside it. Either
+     * side missing a reconciled district makes the pair ineligible: a legacy
+     * row stays invisible here until the migration's reconciliation pass maps
+     * it, and it is never authorized through a city-string fallback.
      */
-    private void validateCleanerLocation(User cleaner, GarbageReport report){
+    private boolean eligibleForDistrictWork(User cleaner, GarbageReport report) {
 
-        // State must match
-        if (!cleaner.getState().equalsIgnoreCase(report.getState())) {
-            throw new UnauthorizedAssignmentAccessException(
-                    "You can only claim cleanup assignments within your assigned state."
-            );
+        if (cleaner.getDistrict() == null || report.getDistrict() == null) {
+            return false;
         }
 
-        // City must match
-        if (!cleaner.getCity().equalsIgnoreCase(report.getCity())) {
-            throw new UnauthorizedAssignmentAccessException(
-                    "You can only claim cleanup assignments within your assigned city."
-            );
-        }
+        return cleaner.getState().equalsIgnoreCase(report.getState())
+                && cleaner.getDistrict().equalsIgnoreCase(report.getDistrict());
     }
 
 
@@ -705,6 +706,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 // Report location
                 .address(assignment.getReport().getAddress())
                 .city(assignment.getReport().getCity())
+                .district(assignment.getReport().getDistrict())
 
                 // Coordinates the cleaner app measures its distance against
                 .reportLatitude(assignment.getReport().getLatitude())

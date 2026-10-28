@@ -38,6 +38,9 @@ public class PublicFeedResponse {
     // State where cleanup was performed
     private String state;
 
+    // District where cleanup was performed (null on legacy cleanups)
+    private String district;
+
     // Name of the cleaner
     private String cleanerName;
 

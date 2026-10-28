@@ -626,6 +626,7 @@ class CleanupAssignmentServiceTest {
                 .role(Role.ROLE_CLEANER)
                 .state("Punjab")   // works in a different municipality
                 .city("Mohali")
+                .district("S.a.s Nagar")
                 .build();
         CleanupAssignment mumbaiSite = assignment(AssignmentStatus.PENDING, null);
 
@@ -638,6 +639,45 @@ class CleanupAssignmentServiceTest {
         List<CleanupAssignmentResponse> open = cleanupAssignmentService.getPendingAssignments();
 
         assertTrue(open.isEmpty()); // city-scoped work stays with the city's own cleaners
+    }
+
+    @Test
+    void openSitesInTheSameDistrictButAnotherUlbAreOfferedToTheCleaner() {
+        // District restriction, not city restriction: a Thane site is inside the
+        // cleaner's registered district, so a different ULB name must not hide it
+        User districtCleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment thaneSite = assignment(AssignmentStatus.PENDING, null);
+        thaneSite.getReport().setCity("Thane"); // a different ULB in the same district
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(districtCleaner));
+        when(assignmentRepository.findByCleanerIsNullAndStatusInOrderByIdDesc(
+                List.of(AssignmentStatus.PENDING, AssignmentStatus.PROPOSAL_SUBMITTED)))
+                .thenReturn(List.of(thaneSite));
+
+        List<CleanupAssignmentResponse> open = cleanupAssignmentService.getPendingAssignments();
+
+        assertEquals(1, open.size()); // district-wide work is visible across ULBs
+        assertEquals("Thane", open.get(0).getCity());
+    }
+
+    @Test
+    void aReportWithoutAReconciledDistrictIsNotOfferedAtAll() {
+        // Fail-closed: a legacy report the reconciliation has not mapped yet is
+        // never eligible, no matter how well the city strings would match
+        User districtCleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment legacySite = assignment(AssignmentStatus.PENDING, null);
+        legacySite.getReport().setDistrict(null);
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(districtCleaner));
+        when(assignmentRepository.findByCleanerIsNullAndStatusInOrderByIdDesc(
+                List.of(AssignmentStatus.PENDING, AssignmentStatus.PROPOSAL_SUBMITTED)))
+                .thenReturn(List.of(legacySite));
+
+        List<CleanupAssignmentResponse> open = cleanupAssignmentService.getPendingAssignments();
+
+        assertTrue(open.isEmpty()); // invisible until mapped, never city-fallback matched
     }
 
     // ---------------------------------------------------------------------
@@ -721,6 +761,7 @@ class CleanupAssignmentServiceTest {
                 .role(Role.ROLE_CLEANER)
                 .state("Maharashtra")
                 .city("Mumbai")
+                .district("Mumbai Suburban")
                 .build();
     }
 
@@ -750,6 +791,7 @@ class CleanupAssignmentServiceTest {
                 .address("MG Road")
                 .city("Mumbai")
                 .state("Maharashtra")
+                .district("Mumbai Suburban")
                 .pincode("400001")
                 .latitude(SITE_LATITUDE)
                 .longitude(SITE_LONGITUDE)

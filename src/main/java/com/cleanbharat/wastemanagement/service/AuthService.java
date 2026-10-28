@@ -341,8 +341,10 @@ public class AuthService {
      *
      * @param googleSubject Google's permanent account id, or null for an account
      *                      that proved its address with an emailed code
-     * @param location      the validated place; its state and city are already in
-     *                      the shape the leaderboard queries match on
+     * @param location      the validated place: state, district and city are
+     *                      already in the shape the leaderboard queries match
+     *                      on, and the ULB code is what ties the account to one
+     *                      exact urban local body
      */
     private User createAccount(
             String name,
@@ -365,6 +367,8 @@ public class AuthService {
                 .organizationName(organizationName)
                 .state(location.state())
                 .city(location.city())
+                .district(location.district())
+                .ulbCode(location.ulbCode())
                 .rewardPoints(0)
                 .build();
 

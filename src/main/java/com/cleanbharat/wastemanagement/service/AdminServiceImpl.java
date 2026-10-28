@@ -461,6 +461,7 @@ public class AdminServiceImpl implements AdminService {
                 // User location
                 .state(user.getState())
                 .city(user.getCity())
+                .district(user.getDistrict())
 
                 // Reward information
                 .rewardPoints(user.getRewardPoints())
@@ -500,6 +501,7 @@ public class AdminServiceImpl implements AdminService {
                 // Location
                 .state(user.getState())
                 .city(user.getCity())
+                .district(user.getDistrict())
 
                 // Reward points
                 .rewardPoints(user.getRewardPoints())

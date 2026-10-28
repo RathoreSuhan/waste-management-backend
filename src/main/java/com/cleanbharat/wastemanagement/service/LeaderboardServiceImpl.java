@@ -186,6 +186,59 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         );
     }
 
+    /*
+     * @Cacheable(value = "leaderboard_top", key = "'district:' + #state.toLowerCase() + '|' + #district.toLowerCase()")
+     *
+     * DISTRICT LEADERBOARD (added by the location refactor):
+     *   Both parts of the (state, district) identity are required and both
+     *   are in the key, so "Aurangabad" in Bihar and "Aurangabad" in
+     *   Maharashtra can never share an entry, and one district's board
+     *   aggregates every ULB inside it rather than splitting per city.
+     *
+     *   The stored district and state are canonical LocationUtil shapes from
+     *   the directory (registration) or the reconciliation pass, and the
+     *   typed input is normalised the same way before the exact match - the
+     *   identical convention the state and city boards already use.
+     *
+     *   Same cache, same TTL, same eviction: RewardServiceImpl and the
+     *   completion approval already evict every 'leaderboard_top' entry with
+     *   allEntries = true, which now covers district keys for free. The
+     *   legacy city scope stays exactly as it is (v6-1) until the documented
+     *   cleanup retires it.
+     */
+    @Cacheable(value = "leaderboard_top",
+            key = "'district:' + #state.toLowerCase() + '|' + #district.toLowerCase()")
+    @Override
+    public LeaderboardResponse getDistrictLeaderboard(String state, String district) {
+
+        state = LocationUtil.normalizeLocation(state);
+        district = LocationUtil.normalizeLocation(district);
+
+        List<User> cleaners =
+                userRepository.findTop10ByRoleAndStateAndDistrictOrderByRewardPointsDesc(
+                        Role.ROLE_CLEANER,
+                        state,
+                        district
+                );
+
+        if (cleaners.isEmpty()) {
+
+            return LeaderboardResponse.builder()
+                    .leaderboardType(LeaderboardType.DISTRICT)
+                    .location(district + ", " + state)
+                    .message("No leaderboard data available for district '" + district + "' in " + state + ".")
+                    .leaderboard(new ArrayList<>())
+                    .build();
+        }
+
+        return buildLeaderboardResponse(
+                cleaners,
+                LeaderboardType.DISTRICT,
+                district + ", " + state,
+                "Top Cleaners in " + district + " district, " + state
+        );
+    }
+
     @Override
     public MyLeaderboardResponse getMyRanking() {
 

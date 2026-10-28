@@ -35,6 +35,9 @@ public class CleanupAssignmentResponse {
     // City where cleanup is required
     private String city;
 
+    // District of the site (null on legacy reports filed before the cascade)
+    private String district;
+
     /**
      * Coordinates of the original citizen report.
      *

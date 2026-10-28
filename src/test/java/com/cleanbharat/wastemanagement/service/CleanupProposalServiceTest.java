@@ -103,6 +103,60 @@ class CleanupProposalServiceTest {
     // ------------------------------------------------------------ core rules
 
     @Test
+    void aCleanerFromAnotherDistrictOfTheSameStateIsRefused() {
+        // District restriction, not city restriction: same state, different
+        // district, so the proposal is refused even though both say "urban"
+        User outsider = User.builder()
+                .id(2L)
+                .name("Cleaner 2")
+                .email(CLEANER_EMAIL)
+                .role(Role.ROLE_CLEANER)
+                .state("Maharashtra")
+                .city("Mumbai")
+                .district("Pune") // same state, different district
+                .build();
+        CleanupAssignment assignment = assignment(AssignmentStatus.PENDING, null);
+        authenticateAs(CLEANER_EMAIL);
+
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(outsider));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        assertThrows(UnauthorizedAssignmentAccessException.class,
+                () -> cleanupProposalService.submitProposal(
+                        ASSIGNMENT_ID, request(SITE_LATITUDE, SITE_LONGITUDE)));
+
+        verify(proposalRepository, never()).save(any(CleanupProposal.class));
+    }
+
+    @Test
+    void aMissingDistrictOnEitherSideIsRefusedRatherThanCityMatched() {
+        // Fail-closed: a legacy report the reconciliation has not mapped yet
+        // must never become eligible because its city string matches
+        User districtLessCleaner = User.builder()
+                .id(2L)
+                .name("Cleaner 2")
+                .email(CLEANER_EMAIL)
+                .role(Role.ROLE_CLEANER)
+                .state("Maharashtra")
+                .city("Mumbai")
+                .district(null) // pre-directory account, not yet reconciled
+                .build();
+        CleanupAssignment assignment = assignment(AssignmentStatus.PENDING, null);
+        authenticateAs(CLEANER_EMAIL);
+
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(districtLessCleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        UnauthorizedAssignmentAccessException refused = assertThrows(
+                UnauthorizedAssignmentAccessException.class,
+                () -> cleanupProposalService.submitProposal(
+                        ASSIGNMENT_ID, request(SITE_LATITUDE, SITE_LONGITUDE)));
+
+        assertTrue(refused.getMessage().contains("reconciled"), refused.getMessage());
+        verify(proposalRepository, never()).save(any(CleanupProposal.class));
+    }
+
+    @Test
     void submitProposalDoesNotAwardTheSiteToTheFirstCleaner() {
         User cleaner = cleaner(2L, CLEANER_EMAIL);
         CleanupAssignment assignment = assignment(AssignmentStatus.PENDING, null);
@@ -419,7 +473,7 @@ class CleanupProposalServiceTest {
         SecurityContextHolder.setContext(context);
     }
 
-    // A cleaner registered for the same city and state as the report
+    // A cleaner registered for the same district and state as the report
     private User cleaner(Long id, String email) {
         return User.builder()
                 .id(id)
@@ -428,6 +482,7 @@ class CleanupProposalServiceTest {
                 .role(Role.ROLE_CLEANER)
                 .state("Maharashtra")
                 .city("Mumbai")
+                .district("Mumbai Suburban")
                 .build();
     }
 
@@ -438,6 +493,7 @@ class CleanupProposalServiceTest {
                 .address("Market Road")
                 .city("Mumbai")
                 .state("Maharashtra")
+                .district("Mumbai Suburban")
                 .latitude(SITE_LATITUDE)
                 .longitude(SITE_LONGITUDE)
                 .build();

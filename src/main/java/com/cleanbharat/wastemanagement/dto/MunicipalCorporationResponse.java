@@ -8,7 +8,8 @@ import lombok.Data;
 public class MunicipalCorporationResponse {
 
     private Long id; // Municipal corporation ID
-    private String city; // City name
+    private String city; // Service-area display name (verbatim for legacy rows)
+    private String ulbCode; // LGD ULB code this corporation is accountable for (null until mapped)
     private String organizationName; // Municipal corporation name
     private String phone; // Contact number
     private String email; // Contact email
