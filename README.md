@@ -4,6 +4,8 @@
 > **Clean Bharat** is a modern AI-powered waste management platform that leverages **Artificial Intelligence, Computer Vision, Cloud Computing, and Community Participation** to create a transparent, efficient, and intelligent garbage reporting and cleanup ecosystem.
 >
 > The platform connects **Citizens**, **Cleaners**, **Municipal Corporations**, and **Administrators** through a unified digital system where garbage reports are **AI-validated**, duplicate reports are automatically prevented, cleanup work is verified using **Google Gemini Vision AI**, and successful cleanups are transparently showcased to the public.
+>
+> Frontend companion: **[waste-management-frontend](https://github.com/RathoreSuhan/waste-management-frontend#readme)**.
 
 ---
 
@@ -110,7 +112,8 @@ The platform automatically generates:
 - Reward History
 - National Leaderboard
 - State Leaderboard
-- City Leaderboard
+- District Leaderboard (all ULBs in one State/District pair)
+- City Leaderboard (retained for backward compatibility)
 - Badge System (Bronze, Silver, Gold)
 
 ---
@@ -291,10 +294,10 @@ Publish to Public Feed
 | Module | Description |
 |---------|-------------|
 | 🔐 Authentication | Secure JWT-based authentication with role-based authorization, email-OTP verification and Google sign-in |
-| 📝 Garbage Reporting | Citizens can report garbage with images and GPS location |
+| 📝 Garbage Reporting | Citizens can report garbage with images, verified GPS and either directory-backed location codes or the legacy city/state shape |
 | ☁️ Cloudinary Integration | Cloud storage for garbage and cleanup images |
-| 📍 Smart Location Module | GPS coordinates, structured address, city, state, and pincode |
-| 🏛 Municipal Management | Admin-managed municipal corporation database |
+| 📍 Smart Location Module | LGD State → District → ULB validation, canonical names, ULB-code routing and legacy compatibility |
+| 🏛 Municipal Management | Admin-managed municipal corporations mapped to official ULB codes without rewriting legacy city values |
 | ⭐ Community Voting | Citizens prioritize reports through a 5-star urgency system |
 | 💬 Community Discussion | Threaded comments with unlimited nested replies |
 | 📊 Engagement Analytics | Trending reports and dashboard analytics |
@@ -302,7 +305,7 @@ Publish to Public Feed
 | 🤖 AI Cleanup Verification | Google Gemini Vision verifies completed cleanups |
 | 🏆 Reward System | Reward history and cleaner recognition |
 | 🌐 Public Feed | Public showcase of AI-verified cleanups |
-| 🥇 Live Leaderboard | National, State, and City rankings |
+| 🥇 Live Leaderboard | National, State, District and City rankings; personal ranking for signed-in cleaners |
 | 👨‍💼 Admin Portal | User management, report moderation, analytics, and deletion workflows |
 
 ---
@@ -493,7 +496,7 @@ The code itself lives in the Redis the application already runs — hashed, unde
 |------|-------------|
 | 👤 Citizen | Reports garbage, votes, comments, tracks reports |
 | 🧹 Cleaner | Proposes cleanups, executes approved work, uploads cleanup proof |
-| 🏛 Municipal Corporation | Approves proposals and signs off completed cleanups **for its own city only** |
+| 🏛 Municipal Corporation | Approves proposals and signs off completed cleanups assigned to its authenticated corporation only |
 | 👨‍💼 Admin | Complete platform management |
 
 Both sign-up routes accept **only** `ROLE_CITIZEN` and `ROLE_CLEANER`. `ROLE_ADMIN` and `ROLE_MUNICIPAL_OFFICER` are rejected with 403.
@@ -649,8 +652,86 @@ The report becomes the central entity used by almost every module in the applica
 
 Every place in Clean Bharat comes from the LGD-based directory
 (`locations/india-ulb-directory.json`, served by `GET /api/locations`).
-Registration has always validated a `stateCode/districtCode/ulbCode` triple;
-the location refactor makes the rest of the platform directory-backed too.
+Registration validates a `stateCode` / `districtCode` / `ulbCode` triple;
+the location refactor makes reporting, routing, cleaner eligibility and the
+district leaderboard use the same verified hierarchy.
+
+## Directory contract
+
+The directory is generated deterministically from the Government of India LGD
+ULB export, not maintained as a handwritten list:
+
+| Artifact | Repository path |
+|---|---|
+| Source workbook | `src/main/resources/locations/source/Ulb_By_State_2026-10-18_16-34-45.xlsx` |
+| Generated directory | `src/main/resources/locations/india-ulb-directory.json` |
+| Generator | `scripts/build_location_directory.py` |
+| Validator/resolver | `service/location/IndianLocationService` |
+| Public endpoint | `GET /api/locations` (`LocationController`) |
+
+The validated generated file contains **36 State/UT codes** (including the
+supplemental Lakshadweep entry), **752 ULB-linked district records**, **5,059
+unique ULB codes**, **5,094 district/ULB rows**, **18 ULB types**, and zero
+duplicate state/district/ULB triples. These are directory-validation results,
+not production database row counts. The workbook is a ULB export: a State/UT
+may exist in the generated state list without having selectable district/ULB
+rows, so the UI does not claim that every State/UT has an available municipal
+area.
+
+`GET /api/locations` returns one nested document:
+
+```text
+{
+  version,
+  source,
+  counts,
+  states: [{
+    code, name,
+    districts: [{
+      code, name,
+      ulbs: [{ code, name, type }]
+    }]
+  }]
+}
+```
+
+The endpoint is public (registration needs it before a JWT exists) and sends
+`Cache-Control: max-age=86400, public`. `IndianLocationService` parses and
+indexes the classpath resource once at application startup; this is HTTP/browser
+caching, not Redis caching. `resolve(stateCode, districtCode, ulbCode)` returns
+`IndianLocationService.ResolvedLocation(state, district, city, ulbCode)` with
+canonical names. `LocationUtil` only normalizes name shape. Missing or malformed
+directory data fails closed through `LocationDataUnavailableException` with
+HTTP `503` rather than accepting arbitrary client-supplied names.
+
+Both `RegisterRequest` and `GoogleRegisterRequest` require the three codes.
+Password and Google registration share the same resolver, so neither route can
+store a cross-state district, an arbitrary city string, or a ULB outside its
+selected district.
+
+## Implementation and rollout status
+
+> **Source default.** The frontend enables the report cascade and District tab
+> only when the build-time value is exactly
+> `VITE_LOCATION_V2_ENABLED="true"`; an unset value or any other spelling uses
+> the legacy report form and hides the District tab. Registration and municipal
+> mapping are directory-backed independently of this flag.
+
+> **Operator-verified production record — 28 October 2026.** The production
+> frontend flag is `true`; stages T0–T5 below were completed; all 18 original
+> reconciliation entries were reported `MAPPED`; report `#24` and Municipal
+> Corporation `#5` were verified with ULB code `248325`, while the corporation's
+> legacy city remains `Mohali`; its phone and email are populated. `MAPPED` is
+> an operator reconciliation result — the checked-in audit-table schema has no
+> status column, and the migration runner only inserts unresolved worklist rows.
+
+> **Implemented and locally validated; deployment/live verification pending.**
+> Exact ULB-code municipal-contact lookup, preserved legacy-city compatibility,
+> no city fallback after an exact ULB miss, partial-contact rendering and the
+> related security rules are present in current source. Local validation records
+> **316 backend tests passing**, frontend lint with **0 errors / 6 React Hook
+> Form warnings**, and a passing frontend production build. These results do not
+> prove that the municipal-contact fix is deployed or working live.
 
 ## What is stored
 
@@ -681,8 +762,15 @@ the location refactor makes the rest of the platform directory-backed too.
 
 ## Migration (operator-runbook, T0–T5)
 
-No DDL and no backfill ever runs during ordinary application startup. The
-whole sequence is operator-controlled:
+The following remains the safe, reusable rollout procedure. For the currently
+recorded production environment it is historical: the operator-verified status
+above says T0–T5 are complete, so **do not rerun the one-off backfill**.
+
+The **location-V2 operator DDL and one-off data backfill** never run during
+ordinary application startup. This statement is intentionally narrow: the
+application still has unrelated, idempotent schema-maintenance initializers
+for its existing columns and constraints. The location sequence is controlled
+explicitly by the operator:
 
 1. **T0 - build only.** The new artifact is built, nothing is deployed.
 2. **T1 - migrate.** Backup → read-only preflight audits → run
@@ -760,49 +848,74 @@ are stored using Cloudinary.
 
 # 📍 Smart Location Module
 
-Instead of storing location as a plain string, every report contains structured geographical information.
+A report combines live site evidence with a structured municipal jurisdiction.
 
 Supported fields
 
-- Latitude
-- Longitude
-- Address
-- Landmark
-- City
+- Latitude and longitude (fresh device GPS)
+- Address and landmark
 - State
+- District
+- City / municipal-area (ULB) name
+- ULB code
 - Pincode
+
+Directory-backed reports carry `stateCode`, `districtCode` and `ulbCode`; the
+backend validates the triple and derives the canonical names. The municipal
+destination is resolved by exact ULB code **before** AI validation, duplicate
+checking or Cloudinary upload. Reports filed through the legacy compatibility
+shape retain their typed city/state and route by city only when `ulb_code` is
+NULL.
 
 Benefits
 
-- Accurate report mapping
-- Future Google Maps integration
-- Cleaner assignment
-- Duplicate detection
-- Nearby report search
-- Municipal mapping
-
-This design allows future GIS-based features without modifying the database structure.
+- Authoritative State → District → ULB identity instead of arbitrary city text
+- Accurate GPS and duplicate detection (the existing pincode/time/bounding-box/
+  Haversine pipeline is unchanged)
+- District-wide cleaner eligibility across every ULB in the district
+- Exact municipal routing without aliases or silent fallback
+- Explicit, actionable refusal for a valid ULB not yet onboarded
+- Future GIS and map integration
 
 ---
 
 # 🏛 Municipal Corporation Module
 
-Municipal Corporations are managed dynamically instead of using hardcoded city mappings.
+Municipal Corporations are admin-managed organizations, separate from the
+official directory: a valid ULB entry does **not** automatically create or
+onboard a corporation.
 
-Administrators can manage:
+Administrators manage:
 
 - Organization Name
-- City
+- Official ULB mapping (`ulb_code`)
+- Preserved legacy city/service-area display name
 - Phone Number
 - Email
 
-Each report automatically maps to the appropriate Municipal Corporation using its city information.
+Creating a new corporation through the directory cascade stores the canonical
+ULB name and code. Mapping an existing corporation sets its ULB code but never
+rewrites its stored `city`, so old reports with `ulb_code = NULL` still reach
+the same legacy destination.
+
+Routing and contact lookup are deliberately split by report type:
+
+| Report | Assignment/contact lookup | On no match |
+|---|---|---|
+| Directory-backed (`ulb_code` present) | Exact ULB code only; assignment uses `findByUlbCode`, contact uses authenticated `GET /api/municipal-corporations/ulb/{ulbCode}` | Explicit `404`; no city fallback, alias or substitute corporation |
+| Legacy (`ulb_code` NULL) | Case-insensitive stored city; authenticated contact endpoint `GET /api/municipal-corporations/city/{city}` | Existing legacy `404` behavior |
+
+`MunicipalCorporationResponse` exposes only `id`, `city`, `ulbCode`,
+`organizationName`, `phone` and `email`; passwords and hashes are never mapped.
+Phone and email remain optional display fields — one missing field does not hide
+the organization or the other available contact.
 
 Benefits
 
-- Easy maintenance
-- Dynamic expansion
-- No code changes for new cities
+- Exact accountability for code-backed reports
+- Backward-compatible routing for historical reports
+- Preserved admin-managed contacts and login identities
+- No code change required to onboard another verified ULB
 
 ## Municipal Corporation Login
 
@@ -937,17 +1050,19 @@ Admin
 # 🗄 Database Design
 
 The backend uses **PostgreSQL** in production and an in-memory **H2** database for automated tests.
-Hibernate generates the schema from the JPA entities (`spring.jpa.hibernate.ddl-auto=update`), so every
-table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagement.entity`.
+Hibernate maps the JPA entities with `spring.jpa.hibernate.ddl-auto=update`, while explicit,
+operator-run SQL handles the additive location-V2 columns. Tables 1–11 below map one-to-one to a
+class in `com.cleanbharat.wastemanagement.entity`; `location_backfill_audit` is an operational SQL
+audit table with no JPA entity.
 
 ## Tables at a Glance
 
 | # | Table | Entity | Purpose |
 |---|-------|--------|---------|
-| 1 | `users` | `User` | Every account — citizen, cleaner, municipal officer, admin |
-| 2 | `garbage_reports` | `GarbageReport` | Citizen-submitted garbage complaints |
-| 3 | `municipal_corporations` | `MunicipalCorporation` | City-wise civic body (also the officer login owner) |
-| 4 | `cleanup_assignments` | `CleanupAssignment` | Work order raised for a report, owned by one city corporation |
+| 1 | `users` | `User` | Every account — citizen, cleaner, municipal officer, admin; directory-backed rows include district and ULB code |
+| 2 | `garbage_reports` | `GarbageReport` | Citizen-submitted complaints with GPS and either structured directory location or legacy city/state |
+| 3 | `municipal_corporations` | `MunicipalCorporation` | Admin-managed civic body, login owner and optional exact ULB mapping |
+| 4 | `cleanup_assignments` | `CleanupAssignment` | Work order raised for a report, owned by one assigned corporation |
 | 5 | `cleanup_proposals` | `CleanupProposal` | Cleaner's site inspection + cleanup plan for an assignment |
 | 6 | `cleanup_approvals` | `CleanupApproval` | Municipal decision trail — proposal stage **and** completion stage |
 | 7 | `cleanup_activity_logs` | `CleanupActivityLog` | Optional progress notes posted while cleaning is in progress |
@@ -955,6 +1070,7 @@ table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagemen
 | 9 | `comments` | `Comment` | Threaded discussion on a report |
 | 10 | `reward_history` | `RewardHistory` | Points ledger for cleaners |
 | 11 | `public_feed_analytics` | `PublicFeedAnalytics` | Likes / views of a completed cleanup story |
+| — | `location_backfill_audit` | *(no JPA entity)* | Operator reconciliation worklist for legacy user/report rows the one-off runner could not map safely |
 
 ## ER Diagram — Accounts & Community
 
@@ -966,10 +1082,11 @@ table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagemen
                  │ name                         │
                  │ email (unique)               │
                  │ password (BCrypt)            │
-                 │ role            <enum>       │
-                 │ cleaner_type    <enum, null> │
-                 │ points                       │
-                 │ created_at                   │
+                 │ role / cleaner_type  <enum>  │
+                 │ state / city (ULB name)      │
+                 │ district (nullable)          │
+                 │ ulb_code (nullable)          │
+                 │ points / created_at          │
                  └──────────────┬───────────────┘
                                 │ 1:N  creates
                                 ▼
@@ -981,9 +1098,11 @@ table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagemen
                  │ title / description          │
                  │ image_url                    │
                  │ latitude / longitude         │
-                 │ address / city               │
-                 │ status          <enum>       │
-                 │ urgency_score                │
+                 │ address / landmark / pincode │
+                 │ state / city (ULB name)      │
+                 │ district / ulb_code (null on │
+                 │   unreconciled legacy rows)  │
+                 │ status / urgency_score       │
                  │ created_at                   │
                  └───┬──────────────────────┬───┘
               1:N    │                      │    1:N
@@ -1008,10 +1127,12 @@ table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagemen
    │       garbage_reports        │      │    municipal_corporations    │
    │──────────────────────────────│      │──────────────────────────────│
    │ the citizen complaint        │      │ id (PK)                      │
-   │ (see diagram above)          │      │ city / organization_name     │
+   │ (see diagram above)          │      │ city (legacy/display value)  │
+   │                              │      │ ulb_code (unique, nullable)  │
+   │                              │      │ organization_name            │
    │                              │      │ phone / email                │
    └──────────────┬───────────────┘      └──────────────┬───────────────┘
-                  │ 1:1 active work order               │ 1:N jobs of that city
+                  │ 1:1 active work order               │ 1:N assigned jobs
                   └───────────────┬─────────────────────┘
                                   ▼
               ┌──────────────────────────────────────────────┐
@@ -1041,7 +1162,7 @@ table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagemen
 |-------------|--------|--------|----------|-------|
 | `garbage_reports` | `user_id` | `users` | No | Reporting citizen |
 | `cleanup_assignments` | `report_id` | `garbage_reports` | No | One active work order per report |
-| `cleanup_assignments` | `municipal_corporation_id` | `municipal_corporations` | No | City body that owns the job |
+| `cleanup_assignments` | `municipal_corporation_id` | `municipal_corporations` | No | Corporation assigned to the report (exact ULB destination for code-backed reports) |
 | `cleanup_assignments` | `cleaner_id` | `users` | **Yes** | Empty until a proposal is approved |
 | `cleanup_proposals` | `assignment_id` | `cleanup_assignments` | No | Cascade ALL + orphan removal from parent |
 | `cleanup_proposals` | `cleaner_id` | `users` | No | Unique with `assignment_id` |
@@ -1061,10 +1182,21 @@ table listed below maps one-to-one to a class in `com.cleanbharat.wastemanagemen
 ## Table Notes
 
 - **`users`** — one table for all four roles; `cleaner_type` is filled only for cleaners.
-  `ROLE_MUNICIPAL_OFFICER` accounts are city-scoped, so an officer only ever sees the reports and
-  assignments of their own corporation.
-- **`municipal_corporations`** — admin-managed master data (city, organisation name, phone, email).
-  It is both the public helpline directory and the owner of every assignment raised in that city.
+  Directory-backed accounts store canonical `state`, ULB name in `city`, nullable `district` and
+  nullable `ulb_code`. `(state, district)` is indexed for district boards. A cleaner whose district
+  has not been reconciled is not eligible for district-restricted work.
+- **`garbage_reports`** — stores GPS/address plus `state`, ULB name in `city`, nullable `district` and
+  nullable `ulb_code`. Code-backed reports fill all four directory fields; legacy reports preserve
+  their typed state/city and keep the new fields NULL until reconciled. `(state, district)` is indexed;
+  the duplicate detector's pincode/location/created-at indexes and algorithm are unchanged.
+- **`municipal_corporations`** — admin-managed master data (preserved city/display value, nullable
+  unique `ulb_code`, organisation name, phone, email and password hash). It is both the contact
+  directory and assignment owner. Mapping an existing row sets only `ulb_code`; it never rewrites
+  the legacy `city` that code-less reports still use.
+- **`location_backfill_audit`** — operator-created SQL audit table, not a JPA entity. The explicitly
+  enabled `LocationMigrationRunner` examines `users` and `garbage_reports` only, writes unresolved
+  rows to this worklist, and never auto-maps corporations (they have no persisted state with which to
+  disambiguate a city name).
 - **`cleanup_assignments`** — created automatically when a report is accepted, so `cleaner_id` stays
   `NULL` while the job is still open for bids. The GPS columns store where the cleaner actually stood
   when starting work (`start_distance_m` is the distance from the reported spot).
@@ -1119,7 +1251,7 @@ Enums that are **never** stored in the database (runtime / API only):
 | **Unique `(user_id, report_id)` on votes** | Prevents double voting on urgency |
 | **Self-referencing `comments`** | Threaded replies without a separate replies table |
 | **Append-only ledger + cached points** | `reward_history` keeps the audit trail while `users.points` keeps leaderboard queries fast |
-| **City scoping** | `municipal_corporation_id` on assignments/approvals keeps every officer inside their own city's data |
+| **Assigned-corporation scoping** | `municipal_corporation_id` on assignments/approvals keeps every officer inside their own corporation's data; exact ULB routing decides that corporation for code-backed reports |
 
 ## Schema Maintenance
 
@@ -1130,7 +1262,8 @@ writes that today's entities consider perfectly valid.
 
 Four startup runners repair exactly those gaps. Each one is PostgreSQL-only, idempotent (a no-op on
 every later boot), logs a warning instead of failing startup, and has a hand-runnable SQL twin in
-`src/main/resources/db/` for repairing a database without deploying.
+`src/main/resources/db/` for repairing a database without deploying. They are unrelated to the
+location-V2 data backfill described below.
 
 | Runner | Repairs | Manual script | Switch off with |
 |--------|---------|---------------|-----------------|
@@ -1147,6 +1280,15 @@ changed to unbounded `text` is left alone rather than narrowed.
 
 `db/backfill-report-status-in-progress.sql` is a one-time data fix, not a schema repair, and has no
 runner — it is meant to be executed by hand.
+
+`LocationMigrationRunner` is different again: it is **absent from ordinary
+startup** unless the operator explicitly supplies
+`cleanbharat.db.location-migration.enabled=true`. It first verifies that
+`db/add-location-columns.sql` has already created the five columns and audit
+table, then maps only `users` and `garbage_reports` within each row's verified
+state. It never writes `municipal_corporations.ulb_code`; corporations are
+mapped through the verified admin cascade or an operator-reviewed T3 update.
+The flag is for one intentional boot only and must remain absent afterward.
 
 ---
 
@@ -1361,9 +1503,9 @@ Writes never update the cache directly. They **evict** it (`@CacheEvict` / `@Cac
 | Cache | Key | TTL | Producer | Why cache this? |
 |--------|-----|-----|----------|-----------------|
 | `homepage_impact_stats` | `'platform-impact'` | 10 min | `AnalyticsServiceImpl.getPlatformImpact()` → `GET /api/analytics/platform-impact` (public) | The 4 homepage **Platform Impact** counters in one small JSON; read by every visitor, logged in or out |
-| `leaderboard_top` | `'national'`, `'state:<name>'`, `'city:<name>'` | 5 min | `LeaderboardServiceImpl` (national / state / city) | Top-10 sort + per-cleaner counts, shown publicly; changes only on reward |
+| `leaderboard_top` | `'national'`, `'state:<name>'`, `'district:<state>\|<district>'`, `'city:<name>'` | 5 min | `LeaderboardServiceImpl` (national / state / district / city) | Top-10 sort + per-cleaner counts; district keys include state so identically named districts never share a board. City keys remain supported |
 | `admin_dashboard_stats` | `'overview'` | 10 min | `AdminServiceImpl.getDashboard()` | 10 aggregate counts; identical for every admin, so one shared key is safe |
-| `municipal_dashboard_stats` | signed-in corporation email (lowercased) | 5 min | `CleanupApprovalServiceImpl.getDashboardStats()` | 5 city-scoped counts; per-tenant key so one city can never read another city's numbers |
+| `municipal_dashboard_stats` | signed-in corporation email (lowercased) | 5 min | `CleanupApprovalServiceImpl.getDashboardStats()` | 5 assignment-scoped counts; per-tenant key so one corporation can never read another's numbers |
 
 Total footprint is **~320 KB** — well under 1 MB of a 30 MB free tier. Only numbers and short labels are cached; Cloudinary image URLs and viewer-specific fields such as `likedByMe` are deliberately **never** cached.
 
@@ -1592,17 +1734,22 @@ Role-based authorization ensures only authenticated cleaners can access these re
 
 ## Municipal Console
 
-The Municipal Corporation of a city gets a dedicated workspace scoped strictly to its own municipality.
+Each Municipal Corporation gets a dedicated workspace scoped strictly to the
+assignments whose `assignedMunicipalCorporation` is that authenticated
+corporation — not to a client-supplied city or district.
 
 Corporations can:
 
-- View city dashboard statistics
+- View their corporation-scoped dashboard statistics
 - Review the proposal queue and approve, reject, or request revision
 - Monitor active cleanups and their activity logs
 - Review AI-verified completion proof and sign off or send back for rework
-- Read the full approval history of any assignment in their city
+- Read the full approval history of any assignment assigned to them
 
-Every request resolves the corporation from the signed-in email, so a corporation can never read or decide another city's cleanups.
+Every request resolves the corporation from the signed-in email and then
+checks the assignment relationship, so one corporation can never read or
+decide another corporation's cleanups, even when legacy city labels and
+canonical ULB names differ.
 
 ---
 
@@ -1695,7 +1842,8 @@ The platform supports multiple ranking scopes.
 |-------------|-------------|
 | 🇮🇳 National | Top cleaners across the country |
 | 🏙 State | Top cleaners within a state |
-| 🌆 City | Top cleaners within a city |
+| 🗺 District | Top cleaners across every ULB in one `(state, district)` pair; identical district names in different states stay separate |
+| 🌆 City | Top cleaners within a city; retained for backward compatibility |
 | 👤 Personal | Individual cleaner ranking |
 
 ---
@@ -2046,27 +2194,34 @@ This phased, modular approach ensured that every feature was built upon a solid 
 The backend follows a clean, modular, and layered architecture to ensure scalability, maintainability, and separation of concerns.
 
 ```text
-src
-└── main
-    ├── java
-    │   └── com.cleanbharat.wastemanagement
-    │       ├── client                # External API clients (Gemini AI)
-    │       ├── config                # Security, mail, Google sign-in, Cloudinary, AI, Redis cache & rate-limit policy
-    │       ├── controller            # REST Controllers
-    │       ├── dto                   # Request & Response DTOs
-    │       ├── entity                # JPA Entities
-    │       ├── enums                 # Application Enums
-    │       ├── exception             # Global & Custom Exceptions
-    │       ├── repository            # Spring Data JPA Repositories
-    │       ├── security              # JWT, Spring Security & rate-limit filter
-    │       ├── service               # Business Logic (incl. email OTP + Google identity verification)
-    │       ├── util                  # Helper Utilities
-    │       └── WasteManagementApplication.java
-    │
-    └── resources
-        ├── application.properties
-        ├── db                        # One-time SQL maintenance scripts
-        └── static
+project root
+├── scripts
+│   └── build_location_directory.py       # Deterministic directory generator
+└── src
+    └── main
+        ├── java
+        │   └── com.cleanbharat.wastemanagement
+        │       ├── client                # External API clients (Gemini AI)
+        │       ├── config                # Security/cache/rate limits + operator-gated LocationMigrationRunner
+        │       ├── controller            # REST Controllers (incl. LocationController)
+        │       ├── dto                   # Request & Response DTOs
+        │       ├── entity                # JPA Entities
+        │       ├── enums                 # Application Enums
+        │       ├── exception             # Global & Custom Exceptions
+        │       ├── repository            # Spring Data JPA Repositories
+        │       ├── security              # JWT, Spring Security & rate-limit filter
+        │       ├── service               # Business Logic
+        │       │   └── location          # IndianLocationService + duplicate-location validation
+        │       ├── util                  # Helper Utilities (incl. LocationUtil)
+        │       └── WasteManagementApplication.java
+        │
+        └── resources
+            ├── application.properties
+            ├── db                        # Additive migration, destructive recovery + maintenance SQL
+            └── locations
+                ├── india-ulb-directory.json
+                ├── README.md
+                └── source               # Pinned LGD workbook
 ```
 
 Each package has a single responsibility, making the codebase easier to understand, extend, and maintain.
@@ -2196,7 +2351,7 @@ app.duplicate.max-age-days=30
 # Redis Caching (connection URL is provided via environment, never committed)
 
 # Example: SPRING_DATA_REDIS_URL=redis://default:<password>@<host>:<port>
-# (or rediss://... for TLS). Spring Boot auto-configures Lettuce from this URL.
+# (or rediss://... for TLS). Spring Boot autoconfigures Lettuce from this URL.
 
 # API Rate Limiting (all optional — these are the in-code defaults, shown for tuning)
 
@@ -2303,8 +2458,8 @@ The backend exposes RESTful APIs organized by functional modules.
 | Authentication | Registration, Login & JWT Authentication |
 | Garbage Reports | Create, View & Manage Garbage Reports |
 | Image Upload | Cloudinary Image Upload |
-| Municipal Corporation | Municipal Contact Management (Admin) |
-| Municipal Console | City-scoped proposal decisions, active cleanups & completion sign-off |
+| Municipal Corporation | Admin-managed contact records and official ULB mappings; authenticated exact-ULB and legacy-city contact lookups |
+| Municipal Console | Assignment-scoped proposal decisions, active cleanups & completion sign-off |
 | Cleanup Proposals | Cleaner proposals and municipal decisions |
 | Cleanup Activity Log | Optional progress updates during an active cleanup |
 | Account | Password change for users and municipal corporations |
@@ -2314,10 +2469,31 @@ The backend exposes RESTful APIs organized by functional modules.
 | Cleanup Assignment | Cleaner Workflow Management |
 | Rewards | Reward Summary & History |
 | Public Feed | AI Verified Cleanup Showcase |
-| Leaderboard | National, State & City Rankings |
+| Leaderboard | National, State, District and City rankings; signed-in cleaner personal ranking |
 | Admin | Dashboard, User & Report Management |
 
 The APIs follow REST principles and consistently return structured JSON responses with proper HTTP status codes.
+
+### Location-related API contract
+
+| Access | Method & path | Contract |
+|---|---|---|
+| Public | `GET /api/locations` | Nested State → District → ULB directory; one-day public HTTP cache; `503` when the bundled directory is unavailable |
+| Public | `POST /api/auth/register` | Password/OTP registration; `RegisterRequest` requires `stateCode`, `districtCode`, `ulbCode` on both calls |
+| Public | `POST /api/auth/google/register` | Google registration with the same three-code location contract |
+| Citizen | `POST /api/reports` (multipart) | V2 shape sends `stateCode`, `districtCode`, `ulbCode`; legacy shape sends `city`, `state`. Common fields include GPS/address/pincode and `image` |
+| Public | `GET /api/leaderboard` | National Top 10 |
+| Public | `GET /api/leaderboard/state/{state}` | State Top 10 |
+| **Authenticated in current source** | `GET /api/leaderboard/district/{state}/{district}` | District Top 10 across all ULBs in the exact State/District pair |
+| Public | `GET /api/leaderboard/city/{city}` | Existing City Top 10; retained for compatibility |
+| Authenticated | `GET /api/municipal-corporations/ulb/{ulbCode}` | Exact location-V2 contact lookup; `404` on no configured corporation, with no city fallback |
+| Authenticated | `GET /api/municipal-corporations/city/{city}` | Legacy contact lookup for reports whose `ulbCode` is absent |
+
+The District controller is implemented on the public leaderboard page, but
+`SecurityConfig`'s current anonymous allow-list contains National, State and
+City only. District therefore falls through to `anyRequest().authenticated()`
+in the current source. This is documented as an access limitation, not hidden
+behind a claim of anonymous availability.
 
 Every endpoint is additionally subject to **Redis-backed rate limiting** in the security filter chain: exceeding a tier's per-minute allowance returns `429 Too Many Requests` with a `Retry-After` header, in the same JSON error shape as every other failure. See **🚦 API Rate Limiting**.
 
@@ -2374,7 +2550,7 @@ Unit tests validate:
 The municipal cleanup workflow is covered end to end, including:
 
 - A cleaner cannot start work before the municipality approves the proposal
-- A municipal corporation can only manage cleanups in its own city
+- A municipal corporation can only manage cleanups assigned to its authenticated corporation
 - Approving a proposal assigns the proposing cleaner
 - Rejected and revision-required proposals cannot be started
 - Activity logs are optional and only accepted while work is in progress
