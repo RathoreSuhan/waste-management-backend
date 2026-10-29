@@ -56,8 +56,8 @@ class UserRepositoryLeaderboardTest {
         save("Maharashtra Aurangabad Cleaner", 10, "Maharashtra", "Aurangabad", "Aurangabad", null);
     }
 
-    private void save(String name, int points, String state, String district, String city, String ulbCode) {
-        userRepository.save(User.builder()
+    private User save(String name, int points, String state, String district, String city, String ulbCode) {
+        return userRepository.save(User.builder()
                 .name(name)
                 .email(name.toLowerCase().replace(' ', '.') + "@example.com")
                 .password("test-password")
@@ -171,5 +171,32 @@ class UserRepositoryLeaderboardTest {
         assertEquals(10, board.size());
         assertEquals(12, board.get(0).getRewardPoints());
         assertEquals(3, board.get(9).getRewardPoints());
+    }
+
+    @Test
+    void thePersonalRankCountsReproduceTheBoardPositionForTiedPoints() {
+        // Board order: points descending, ties broken by id ascending. The
+        // cleaner seeded last among three 90-point rows sits behind the
+        // leader (100) AND behind the two equal-point rows saved earlier.
+        save("Rank Leader", 100, "Bihar", "Gaya", "Gaya", "249680");
+        save("Tied First", 90, "Punjab", "S.A.S Nagar", "Mohali", "248325");
+        save("Tied Second", 90, "Punjab", "S.A.S Nagar", "Mohali", "248325");
+        User me = save("Tied Last", 90, "Punjab", "S.A.S Nagar", "Mohali", "248325");
+
+        long rankedAbove = userRepository.countByRoleAndRewardPointsGreaterThan(
+                Role.ROLE_CLEANER, 90);
+        long tiedRankedAhead = userRepository.countByRoleAndRewardPointsAndIdLessThan(
+                Role.ROLE_CLEANER, 90, me.getId());
+
+        // Board position = 1 + 2 + 1 = 3rd, the number the national board
+        // displays for this row
+        assertEquals(1, rankedAbove);
+        assertEquals(2, tiedRankedAhead);
+
+        // A zero-points cleaner counts everyone above them, ties included:
+        // this test's four rows plus the seven positive-point rows the
+        // shared fixture seeds
+        assertEquals(11, userRepository.countByRoleAndRewardPointsGreaterThan(
+                Role.ROLE_CLEANER, 0));
     }
 }

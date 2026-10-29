@@ -85,7 +85,7 @@ public class LeaderboardServiceImpl implements LeaderboardService {
     public LeaderboardResponse getPublicLeaderboard() {
 
         List<User> cleaners =
-                userRepository.findTop10ByRoleOrderByRewardPointsDesc(
+                userRepository.findTop10ByRoleOrderByRewardPointsDescIdAsc(
                         Role.ROLE_CLEANER
                 );
 
@@ -312,15 +312,33 @@ public class LeaderboardServiceImpl implements LeaderboardService {
         // Logged-in cleaner
         User cleaner = getLoggedInCleaner();
 
-        // Count cleaners having more reward points
-        long higherRankedCleaners =
+        /*
+         * The rank this cleaner would see on the National board.
+         *
+         * The board orders cleaners by reward points descending, breaking
+         * ties by id ascending, and numbers its rows sequentially. This
+         * cleaner's position in that ordering is therefore: every cleaner
+         * with strictly more points, plus every equal-point cleaner whose
+         * id orders them ahead, plus one. Counting only the strictly-higher
+         * cleaners - the previous formula - answered the competition-style
+         * rank instead, and the two diverged exactly when ties existed
+         * (the board said 3 while My Standing said 2).
+         */
+        long cleanersRankedAbove =
                 userRepository.countByRoleAndRewardPointsGreaterThan(
                         Role.ROLE_CLEANER,
                         cleaner.getRewardPoints()
                 );
 
-        // Current cleaner's rank
-        int rank = (int) higherRankedCleaners + 1;
+        long equalPointsRankedAhead =
+                userRepository.countByRoleAndRewardPointsAndIdLessThan(
+                        Role.ROLE_CLEANER,
+                        cleaner.getRewardPoints(),
+                        cleaner.getId()
+                );
+
+        // Current cleaner's rank - their actual national board position
+        int rank = (int) (cleanersRankedAbove + equalPointsRankedAhead) + 1;
 
         // Total completed cleanups
         long completedCount =

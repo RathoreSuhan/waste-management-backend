@@ -42,10 +42,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
     boolean existsByEmail(String email);
 
     /**
-     * Returns Top 10 cleaners ordered
-     * by highest reward points.
+     * Returns Top 10 cleaners ordered by highest reward points.
+     *
+     * Ties are broken by id ascending so the board's sequential rank
+     * numbers are deterministic: the same points ordering always produces
+     * the same displayed ranks, which is what the personal ranking
+     * (getMyRanking) must be able to reproduce exactly.
      */
-    List<User> findTop10ByRoleOrderByRewardPointsDesc(Role role);
+    List<User> findTop10ByRoleOrderByRewardPointsDescIdAsc(Role role);
 
     /**
      * Returns the number of cleaners
@@ -63,6 +67,24 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByRoleAndRewardPointsGreaterThan(
             @Param("role") Role role,
             @Param("rewardPoints") Integer rewardPoints
+    );
+
+    /**
+     * Returns the number of cleaners tied on the given reward points whose
+     * id orders them BEFORE the given cleaner on the national board.
+     *
+     * The board ranks rows sequentially (points descending, id ascending
+     * among ties), so a cleaner's displayed rank is the number of cleaners
+     * strictly above them plus the number of equal-point cleaners ordered
+     * ahead of them, plus one. Counting only strictly-higher points - the
+     * old formula - answers the competition-style rank instead, and the two
+     * diverge exactly when ties exist (the reported "board says 3, My
+     * Standing says 2" mismatch).
+     */
+    long countByRoleAndRewardPointsAndIdLessThan(
+            Role role,
+            Integer rewardPoints,
+            Long id
     );
 
     /*

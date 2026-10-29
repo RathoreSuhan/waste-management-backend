@@ -1,6 +1,7 @@
 package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.LeaderboardResponse;
+import com.cleanbharat.wastemanagement.dto.MyLeaderboardResponse;
 import com.cleanbharat.wastemanagement.entity.User;
 import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
 import com.cleanbharat.wastemanagement.enums.LeaderboardType;
@@ -9,6 +10,7 @@ import com.cleanbharat.wastemanagement.exception.LocationDataUnavailableExceptio
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,8 +18,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -57,6 +63,17 @@ class LeaderboardServiceImplTest {
                 .thenReturn(1L);
     }
 
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext(); // tests share one thread, so never leak a principal
+    }
+
+    private void authenticateAs(String email) {
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(new UsernamePasswordAuthenticationToken(email, "n/a", List.of()));
+        SecurityContextHolder.setContext(context);
+    }
+
     private User cleaner(long id, String name, int points, String state, String city, String district) {
         return User.builder()
                 .id(id)
@@ -82,7 +99,7 @@ class LeaderboardServiceImplTest {
     void theNationalBoardIsUnchangedInShapeAndOrder() {
         User gold = cleaner(1L, "Gold Cleaner", 500, "Bihar", "Gaya", "Gaya");
         User silver = cleaner(2L, "Silver Cleaner", 250, "Punjab", "Mohali", "S.A.S Nagar");
-        when(userRepository.findTop10ByRoleOrderByRewardPointsDesc(Role.ROLE_CLEANER))
+        when(userRepository.findTop10ByRoleOrderByRewardPointsDescIdAsc(Role.ROLE_CLEANER))
                 .thenReturn(List.of(gold, silver));
 
         LeaderboardResponse board = leaderboardService.getPublicLeaderboard();
@@ -92,6 +109,93 @@ class LeaderboardServiceImplTest {
         assertEquals(1, board.getLeaderboard().get(0).getRank());
         assertEquals("Gold Cleaner", board.getLeaderboard().get(0).getCleanerName());
         assertEquals(1, board.getLeaderboard().get(0).getCompletedCleanups());
+    }
+
+    // ---------------------------------------------------------- my standing
+
+    @Test
+    void myStandingMatchesTheNationalBoardRankWhenPointsAreTied() {
+        // The reported mismatch, reproduced: Suhan ties with the rank-2
+        // cleaner. The board numbers its rows sequentially (1, 2, 3); the
+        // old formula counted only strictly-higher points and answered 2.
+        User leader = cleaner(1L, "Leader Cleaner", 100, "Bihar", "Gaya", "Gaya");
+        User tiedAhead = cleaner(2L, "Tied Ahead Cleaner", 90, "Punjab", "Mohali", "S.A.S Nagar");
+        User suhan = cleaner(3L, "Suhan Kumar Singh", 90, "Punjab", "Mohali", "S.A.S Nagar");
+
+        when(userRepository.findTop10ByRoleOrderByRewardPointsDescIdAsc(Role.ROLE_CLEANER))
+                .thenReturn(List.of(leader, tiedAhead, suhan));
+
+        authenticateAs("cleaner3@example.com");
+        when(userRepository.findByEmail("cleaner3@example.com")).thenReturn(Optional.of(suhan));
+        when(userRepository.countByRoleAndRewardPointsGreaterThan(Role.ROLE_CLEANER, 90))
+                .thenReturn(1L);
+        when(userRepository.countByRoleAndRewardPointsAndIdLessThan(Role.ROLE_CLEANER, 90, 3L))
+                .thenReturn(1L);
+
+        // The board ranks Suhan's row 3rd...
+        LeaderboardResponse national = leaderboardService.getPublicLeaderboard();
+        assertEquals(3, national.getLeaderboard().get(2).getRank());
+        assertEquals("Suhan Kumar Singh", national.getLeaderboard().get(2).getCleanerName());
+
+        // ...and My Standing now answers the same number
+        MyLeaderboardResponse my = leaderboardService.getMyRanking();
+        assertEquals(3, my.getRank());
+    }
+
+    @Test
+    void myStandingCountsEveryEqualPointCleanerRankedAheadOfMe() {
+        User me = cleaner(9L, "Me Cleaner", 90, "Punjab", "Mohali", "S.A.S Nagar");
+        authenticateAs("cleaner9@example.com");
+        when(userRepository.findByEmail("cleaner9@example.com")).thenReturn(Optional.of(me));
+        // One cleaner strictly above, two equal-point cleaners whose ids
+        // order them ahead: the board position is therefore 4
+        when(userRepository.countByRoleAndRewardPointsGreaterThan(Role.ROLE_CLEANER, 90))
+                .thenReturn(1L);
+        when(userRepository.countByRoleAndRewardPointsAndIdLessThan(Role.ROLE_CLEANER, 90, 9L))
+                .thenReturn(2L);
+
+        assertEquals(4, leaderboardService.getMyRanking().getRank());
+    }
+
+    @Test
+    void myStandingKeepsTheSimpleRankWhenNoPointsAreTied() {
+        User me = cleaner(7L, "Me Cleaner", 50, "Bihar", "Gaya", "Gaya");
+        authenticateAs("cleaner7@example.com");
+        when(userRepository.findByEmail("cleaner7@example.com")).thenReturn(Optional.of(me));
+        when(userRepository.countByRoleAndRewardPointsGreaterThan(Role.ROLE_CLEANER, 50))
+                .thenReturn(2L);
+        when(userRepository.countByRoleAndRewardPointsAndIdLessThan(Role.ROLE_CLEANER, 50, 7L))
+                .thenReturn(0L);
+
+        assertEquals(3, leaderboardService.getMyRanking().getRank());
+    }
+
+    @Test
+    void myStandingReturnsTheTrueNationalRankEvenBeyondTheTopTen() {
+        // The API contract keeps the honest national rank for every cleaner;
+        // hiding the number beyond the board's window is the card's job
+        User me = cleaner(30L, "Me Cleaner", 40, "Bihar", "Gaya", "Gaya");
+        authenticateAs("cleaner30@example.com");
+        when(userRepository.findByEmail("cleaner30@example.com")).thenReturn(Optional.of(me));
+        when(userRepository.countByRoleAndRewardPointsGreaterThan(Role.ROLE_CLEANER, 40))
+                .thenReturn(14L);
+        when(userRepository.countByRoleAndRewardPointsAndIdLessThan(Role.ROLE_CLEANER, 40, 30L))
+                .thenReturn(0L);
+
+        assertEquals(15, leaderboardService.getMyRanking().getRank());
+    }
+
+    @Test
+    void myStandingKeepsTheCorrectRankInsideTheTopTen() {
+        User me = cleaner(11L, "Me Cleaner", 60, "Bihar", "Gaya", "Gaya");
+        authenticateAs("cleaner11@example.com");
+        when(userRepository.findByEmail("cleaner11@example.com")).thenReturn(Optional.of(me));
+        when(userRepository.countByRoleAndRewardPointsGreaterThan(Role.ROLE_CLEANER, 60))
+                .thenReturn(6L);
+        when(userRepository.countByRoleAndRewardPointsAndIdLessThan(Role.ROLE_CLEANER, 60, 11L))
+                .thenReturn(0L);
+
+        assertEquals(7, leaderboardService.getMyRanking().getRank());
     }
 
     // --------------------------------------------------------------- state
