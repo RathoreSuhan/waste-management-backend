@@ -1,11 +1,16 @@
 package com.cleanbharat.wastemanagement.controller;
 
 import com.cleanbharat.wastemanagement.dto.ChangePasswordRequest;
+import com.cleanbharat.wastemanagement.dto.ConfirmPasswordResetRequest;
+import com.cleanbharat.wastemanagement.dto.PasswordResetTokenResponse;
 import com.cleanbharat.wastemanagement.dto.SuccessResponse;
 import com.cleanbharat.wastemanagement.dto.UpdateProfileRequest;
 import com.cleanbharat.wastemanagement.dto.UserProfileResponse;
+import com.cleanbharat.wastemanagement.dto.VerifyPasswordResetOtpRequest;
 import com.cleanbharat.wastemanagement.dto.admin.UserDetailsResponse;
+import com.cleanbharat.wastemanagement.enums.Role;
 import com.cleanbharat.wastemanagement.service.AccountService;
+import com.cleanbharat.wastemanagement.service.PasswordRecoveryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -28,6 +33,8 @@ public class AccountController {
 
     private final AccountService accountService;
 
+    private final PasswordRecoveryService passwordRecoveryService;
+
     @PatchMapping("/password")
     public ResponseEntity<SuccessResponse> changePassword(
             Authentication authentication,
@@ -39,6 +46,75 @@ public class AccountController {
         );
 
         return ResponseEntity.ok(response);
+    }
+
+    /*
+     * Password recovery for the profile page, for a signed-in user who
+     * cannot remember their current password. All three steps resolve the
+     * account from the authenticated identity only - there is no email or
+     * account field in any of the payloads, so a request can never aim a
+     * reset at somebody else's account. Every step is also namespaced by
+     * the session's account context (municipal officer vs users-table
+     * account), so two accounts sharing an email across the two stores can
+     * never consume each other's codes or reset authorizations.
+     * SecurityConfig's fall-through rule keeps them authenticated, and the
+     * rate limiter counts them in the same strict auth tier as the
+     * change-password endpoint itself.
+     */
+
+    /** Sends a six-digit recovery code to the authenticated account's email. */
+    @PostMapping("/password/recovery/otp")
+    public ResponseEntity<SuccessResponse> requestPasswordResetOtp(
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                passwordRecoveryService.requestOtp(
+                        authentication.getName(),
+                        isMunicipalSession(authentication)
+                )
+        );
+    }
+
+    /** Verifies the code and issues the one-time reset token. */
+    @PostMapping("/password/recovery/verify")
+    public ResponseEntity<PasswordResetTokenResponse> verifyPasswordResetOtp(
+            Authentication authentication,
+            @Valid @RequestBody VerifyPasswordResetOtpRequest request
+    ) {
+        return ResponseEntity.ok(
+                passwordRecoveryService.verifyOtp(
+                        authentication.getName(),
+                        isMunicipalSession(authentication),
+                        request.getCode()
+                )
+        );
+    }
+
+    /** Spends the token and sets the new password - no current password required. */
+    @PostMapping("/password/recovery/confirm")
+    public ResponseEntity<SuccessResponse> confirmPasswordReset(
+            Authentication authentication,
+            @Valid @RequestBody ConfirmPasswordResetRequest request
+    ) {
+        return ResponseEntity.ok(
+                passwordRecoveryService.confirmReset(
+                        authentication.getName(),
+                        isMunicipalSession(authentication),
+                        request
+                )
+        );
+    }
+
+    /**
+     * Mirrors how CustomUserDetailsService resolved this session at login: a
+     * municipal-officer authority means the account lives in the
+     * municipal_corporations table, everyone else in users. Derived from the
+     * authenticated authority alone - a client cannot choose it.
+     */
+    private boolean isMunicipalSession(Authentication authentication) {
+        return authentication.getAuthorities().stream()
+                .anyMatch(authority ->
+                        Role.ROLE_MUNICIPAL_OFFICER.name().equals(authority.getAuthority()));
     }
 
     /**

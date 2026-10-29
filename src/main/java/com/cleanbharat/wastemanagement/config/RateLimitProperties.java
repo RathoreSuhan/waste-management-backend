@@ -156,8 +156,9 @@ public class RateLimitProperties {
 
         boolean post = "POST".equalsIgnoreCase(method);
 
-        // Credential paths
-        if (path.startsWith("/api/auth/") || path.equals("/api/account/password")) {
+        // Credential paths: the change-password endpoint and the profile
+        // recovery flow under it (OTP send, verify, confirm)
+        if (path.startsWith("/api/auth/") || path.startsWith("/api/account/password")) {
             return new Rule(SCOPE_AUTH, authPerMinute);
         }
 

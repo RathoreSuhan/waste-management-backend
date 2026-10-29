@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -18,6 +19,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -30,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -303,6 +306,179 @@ class EmailVerificationServiceTest {
         emailVerificationService.verifyCode("Citizen@Example.COM", "123456");
 
         verify(valueOperations).get("evc:" + fingerprintOf(EMAIL));
+    }
+
+    // ---------------------------------------------------------------------
+    // Purposes: registration codes and password-reset codes never mix
+    // ---------------------------------------------------------------------
+
+    @Test
+    void aPasswordResetCodeIsNamespacedApartFromRegistration() {
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisTemplate.getExpire(anyString(), eq(TimeUnit.SECONDS))).thenReturn(null);
+
+        emailVerificationService.sendCode(EMAIL, EmailVerificationService.Purpose.PASSWORD_RESET);
+
+        ArgumentCaptor<String> storedKey = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+
+        verify(valueOperations).set(storedKey.capture(), anyString(), eq(Duration.ofMinutes(10)));
+        verify(mailSender).send(sent.capture());
+
+        // Its own namespace, so a reset code can never stand in for a
+        // sign-up code and the two cooldowns stay independent
+        assertTrue(storedKey.getValue().startsWith("prc:"), storedKey.getValue());
+
+        // The email says what the code is for, in both languages
+        assertEquals("Reset your Clean Bharat password", sent.getValue().getSubject());
+        assertTrue(sent.getValue().getText().contains("password recovery"), sent.getValue().getText());
+        assertTrue(sent.getValue().getText().contains("पासवर्ड पुनर्प्राप्ति"), sent.getValue().getText());
+    }
+
+    @Test
+    void aResetCodeCannotAuthorizeRegistrationAndViceVersa() {
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisTemplate.getExpire(anyString(), eq(TimeUnit.SECONDS))).thenReturn(null);
+
+        // A password-reset code is outstanding...
+        emailVerificationService.sendCode(EMAIL, EmailVerificationService.Purpose.PASSWORD_RESET);
+        String resetCode = sentCodeViaSmtp();
+
+        // ...and a registration code is outstanding alongside it
+        emailVerificationService.sendCode(EMAIL);
+        String registrationCode = sentCodeViaSmtp();
+
+        // Each namespace holds exactly its own code's hash
+        String fingerprint = fingerprintOf(EMAIL);
+        when(valueOperations.get("prc:" + fingerprint)).thenReturn(sha256Hex(resetCode));
+        when(valueOperations.get("evc:" + fingerprint)).thenReturn(sha256Hex(registrationCode));
+
+        // A reset code cannot authorize registration...
+        assertThrows(InvalidRegistrationException.class,
+                () -> emailVerificationService.verifyCode(EMAIL, resetCode));
+
+        // ...and a registration code cannot authorize a password reset
+        assertThrows(InvalidRegistrationException.class,
+                () -> emailVerificationService.verifyCode(
+                        EMAIL, registrationCode, EmailVerificationService.Purpose.PASSWORD_RESET));
+
+        // Each code still verifies for its own purpose
+        emailVerificationService.verifyCode(
+                EMAIL, resetCode, EmailVerificationService.Purpose.PASSWORD_RESET);
+        emailVerificationService.verifyCode(EMAIL, registrationCode);
+    }
+
+    @Test
+    void aPasswordResetEmailRidesTheBrevoTransportWhenConfigured() {
+
+        EmailVerificationService spied = Mockito.spy(new EmailVerificationService(redisTemplate, mailSender));
+        ReflectionTestUtils.setField(spied, "username", SENDER);
+        ReflectionTestUtils.setField(spied, "from", "");
+        ReflectionTestUtils.setField(spied, "brevoApiKey", "test-key");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisTemplate.getExpire(anyString(), eq(TimeUnit.SECONDS))).thenReturn(null);
+
+        doNothing().when(spied).sendViaBrevo(anyString(), anyString(), anyString());
+
+        spied.sendCode(EMAIL, EmailVerificationService.Purpose.PASSWORD_RESET);
+
+        // The Brevo HTTPS path carried the reset email, with the recovery
+        // subject and body - no real request leaves the test
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(spied).sendViaBrevo(eq(EMAIL), subject.capture(), body.capture());
+
+        assertEquals("Reset your Clean Bharat password", subject.getValue());
+        assertTrue(body.getValue().contains("recovery code"), body.getValue());
+        verify(mailSender, never()).send(any(SimpleMailMessage.class));
+    }
+
+    @Test
+    void registrationDeliveryIsUnchangedOnTheBrevoPath() {
+
+        EmailVerificationService spied = Mockito.spy(new EmailVerificationService(redisTemplate, mailSender));
+        ReflectionTestUtils.setField(spied, "username", SENDER);
+        ReflectionTestUtils.setField(spied, "from", "");
+        ReflectionTestUtils.setField(spied, "brevoApiKey", "test-key");
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisTemplate.getExpire(anyString(), eq(TimeUnit.SECONDS))).thenReturn(null);
+
+        doNothing().when(spied).sendViaBrevo(anyString(), anyString(), anyString());
+
+        spied.sendCode(EMAIL);
+
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        verify(spied).sendViaBrevo(eq(EMAIL), subject.capture(), anyString());
+
+        assertEquals("Verify your Clean Bharat email address", subject.getValue());
+        verify(mailSender, never()).send(any(SimpleMailMessage.class));
+    }
+
+    @Test
+    void theSmtpPathServesTheResetEmailWhenBrevoIsNotConfigured() {
+
+        // brevoApiKey stays unset (setUp), so the reset goes out via SMTP
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisTemplate.getExpire(anyString(), eq(TimeUnit.SECONDS))).thenReturn(null);
+
+        emailVerificationService.sendCode(EMAIL, EmailVerificationService.Purpose.PASSWORD_RESET);
+
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender).send(sent.capture());
+        assertEquals("Reset your Clean Bharat password", sent.getValue().getSubject());
+    }
+
+    /** Captures the code out of the SMTP message that a send just produced. */
+    private String sentCodeViaSmtp() {
+        ArgumentCaptor<SimpleMailMessage> sent = ArgumentCaptor.forClass(SimpleMailMessage.class);
+        verify(mailSender, Mockito.atLeastOnce()).send(sent.capture());
+        List<SimpleMailMessage> messages = sent.getAllValues();
+        return extractCode(messages.get(messages.size() - 1).getText());
+    }
+
+    @Test
+    void recoveryCooldownsAndAttemptCountersAreScopedByAccountContext() {
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        String fingerprint = fingerprintOf(EMAIL);
+
+        // A live cooldown on the municipal context's code key (issued ~30s
+        // ago: 570 seconds of its 600-second TTL remain)
+        when(redisTemplate.getExpire("prc:municipal:" + fingerprint, TimeUnit.SECONDS))
+                .thenReturn(570L);
+
+        InvalidRegistrationException cooledDown = assertThrows(
+                InvalidRegistrationException.class,
+                () -> emailVerificationService.sendCode(
+                        EMAIL, EmailVerificationService.Purpose.PASSWORD_RESET, "municipal"));
+        assertTrue(cooledDown.getMessage().contains("Please wait"), cooledDown.getMessage());
+
+        // ...leaves the user context free to send its own code
+        when(redisTemplate.getExpire("prc:user:" + fingerprint, TimeUnit.SECONDS)).thenReturn(null);
+        emailVerificationService.sendCode(EMAIL, EmailVerificationService.Purpose.PASSWORD_RESET, "user");
+
+        verify(valueOperations).set(
+                eq("prc:user:" + fingerprint), anyString(), eq(Duration.ofMinutes(10)));
+
+        // Attempt counters are equally separate: five burnt guesses against
+        // the user context refuse the user context but not the municipal one
+        when(valueOperations.get("prc:user:" + fingerprint)).thenReturn(sha256Hex("654321"));
+        when(valueOperations.get("prc:municipal:" + fingerprint)).thenReturn(sha256Hex("654321"));
+        when(valueOperations.increment("pra:user:" + fingerprint)).thenReturn(6L);
+        when(valueOperations.increment("pra:municipal:" + fingerprint)).thenReturn(1L);
+
+        InvalidRegistrationException burntOut = assertThrows(
+                InvalidRegistrationException.class,
+                () -> emailVerificationService.verifyCode(
+                        EMAIL, "654321", EmailVerificationService.Purpose.PASSWORD_RESET, "user"));
+        assertTrue(burntOut.getMessage().contains("Too many incorrect"), burntOut.getMessage());
+
+        emailVerificationService.verifyCode(
+                EMAIL, "654321", EmailVerificationService.Purpose.PASSWORD_RESET, "municipal");
     }
 
     // ---------------------------------------------------------------------

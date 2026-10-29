@@ -84,10 +84,36 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class EmailVerificationService {
 
-    /** Dedicated namespaces. Nothing else in the application writes these. */
-    static final String CODE_KEY_PREFIX = "evc:";
+    /**
+     * What a code authorizes. Purposes are namespaced apart in Redis, so a
+     * sign-up code can never authorize a password reset and vice versa -
+     * the two lookups simply read different keys.
+     */
+    public enum Purpose {
 
-    static final String ATTEMPT_KEY_PREFIX = "eva:";
+        /** Proves mailbox ownership at sign-up. Legacy prefixes kept stable. */
+        REGISTRATION("evc:", "eva:", "Verify your Clean Bharat email address"),
+
+        /** Authorizes the profile-page password recovery flow. */
+        PASSWORD_RESET("prc:", "pra:", "Reset your Clean Bharat password");
+
+        public final String codeKeyPrefix;
+
+        public final String attemptKeyPrefix;
+
+        public final String emailSubject;
+
+        Purpose(String codeKeyPrefix, String attemptKeyPrefix, String emailSubject) {
+            this.codeKeyPrefix = codeKeyPrefix;
+            this.attemptKeyPrefix = attemptKeyPrefix;
+            this.emailSubject = emailSubject;
+        }
+    }
+
+    /** Registration's namespaces, kept as constants for the existing tests. */
+    static final String CODE_KEY_PREFIX = Purpose.REGISTRATION.codeKeyPrefix;
+
+    static final String ATTEMPT_KEY_PREFIX = Purpose.REGISTRATION.attemptKeyPrefix;
 
     private static final Duration CODE_LIFETIME = Duration.ofMinutes(10);
 
@@ -147,22 +173,62 @@ public class EmailVerificationService {
     private String brevoSenderName;
 
     /**
-     * Sends a fresh code to the address, replacing any code already outstanding.
+     * Sends a fresh sign-up code to the address, replacing any code already
+     * outstanding.
      *
      * @throws InvalidRegistrationException if mail is unconfigured, another code
      *         was sent less than a minute ago, or the message could not be sent
      */
     public void sendCode(String email) {
+        sendCode(email, Purpose.REGISTRATION);
+    }
+
+    /**
+     * Sends a fresh sign-up code to the address, replacing any code already
+     * outstanding.
+     *
+     * @throws InvalidRegistrationException if mail is unconfigured, another code
+     *         was sent less than a minute ago, or the message could not be sent
+     */
+    public void sendCode(String email) {
+        sendCode(email, Purpose.REGISTRATION, null);
+    }
+
+    /**
+     * Sends a fresh code for the given purpose without an account context,
+     * replacing any code already outstanding for that purpose.
+     */
+    public void sendCode(String email, Purpose purpose) {
+        sendCode(email, purpose, null);
+    }
+
+    /**
+     * Sends a fresh code for the given purpose, scoped to the given account
+     * context, replacing any code already outstanding for that purpose and
+     * context.
+     *
+     * Purposes keep separate cooldowns: a password-reset send is never
+     * blocked by a recent sign-up send. The context separates accounts that
+     * share an address across stores - a municipal officer and a users-row
+     * account with the same email each get their own code, attempts and
+     * cooldown, and neither can consume the other's.
+     *
+     * @param keyContext optional account-context tag (e.g. "user",
+     *        "municipal") woven into the Redis keys; derived by the caller
+     *        from the authenticated authority, never from client input.
+     *        Null keeps the legacy key shape (registration).
+     */
+    public void sendCode(String email, Purpose purpose, String keyContext) {
 
         if (!StringUtils.hasText(username)) {
-            log.error("MAIL_USERNAME is not set, so sign-up verification codes cannot be sent.");
+            log.error("MAIL_USERNAME is not set, so verification codes cannot be sent.");
 
             throw new InvalidRegistrationException(NOT_CONFIGURED);
         }
 
         String fingerprint = fingerprint(email);
 
-        long waitSeconds = secondsUntilResendAllowed(fingerprint);
+        long waitSeconds = secondsUntilResendAllowed(fingerprint, purpose, keyContext);
 
         if (waitSeconds > 0) {
             throw new InvalidRegistrationException(
@@ -180,12 +246,12 @@ public class EmailVerificationService {
         */
         try {
             redisTemplate.opsForValue().set(
-                    CODE_KEY_PREFIX + fingerprint,
+                    codeKey(purpose, keyContext, fingerprint),
                     hash(code),
                     CODE_LIFETIME
             );
 
-            redisTemplate.delete(ATTEMPT_KEY_PREFIX + fingerprint);
+            redisTemplate.delete(attemptKey(purpose, keyContext, fingerprint));
 
         } catch (DataAccessException ex) {
             /*
@@ -201,13 +267,13 @@ public class EmailVerificationService {
         try {
             if (StringUtils.hasText(brevoApiKey)) {
                 // HTTPS/443 - works on Render free tier where SMTP ports are blocked
-                sendViaBrevo(email, code);
+                sendViaBrevo(email, purpose.emailSubject, buildTextBody(purpose, code));
             } else {
-                mailSender.send(buildMessage(email, code));
+                mailSender.send(buildMessage(email, purpose.emailSubject, buildTextBody(purpose, code)));
             }
 
         } catch (Exception ex) {
-            discard(fingerprint); // nothing arrived, so nothing should block a retry
+            discard(fingerprint, purpose, keyContext); // nothing arrived, so nothing should block a retry
 
             // Address/code never logged; root cause kept for Render log diagnosis (no secrets)
             log.warn("Could not send a verification code: {} cause={} msg={}",
@@ -220,7 +286,7 @@ public class EmailVerificationService {
     }
 
     /**
-     * Checks a submitted code and consumes it.
+     * Checks a submitted sign-up code and consumes it.
      *
      * A correct code is removed on use, so one code creates at most one account.
      *
@@ -228,6 +294,40 @@ public class EmailVerificationService {
      *         wrong, or too many wrong codes have already been tried
      */
     public void verifyCode(String email, String code) {
+        verifyCode(email, code, Purpose.REGISTRATION);
+    }
+
+    /**
+     * Checks a submitted sign-up code and consumes it.
+     *
+     * A correct code is removed on use, so one code creates at most one account.
+     *
+     * @throws InvalidRegistrationException if the code is missing, expired,
+     *         wrong, or too many wrong codes have already been tried
+     */
+    public void verifyCode(String email, String code) {
+        verifyCode(email, code, Purpose.REGISTRATION, null);
+    }
+
+    /**
+     * Checks a submitted code for the given purpose without an account
+     * context and consumes it.
+     */
+    public void verifyCode(String email, String code, Purpose purpose) {
+        verifyCode(email, code, purpose, null);
+    }
+
+    /**
+     * Checks a submitted code for the given purpose and account context and
+     * consumes it.
+     *
+     * Only codes sent for this purpose AND context are read - a password-
+     * reset code can never authorize a sign-up, a sign-up code can never
+     * authorize a password reset, and a code verified for one account store
+     * can never authorize work against the other store, even when both
+     * accounts share an email address.
+     */
+    public void verifyCode(String email, String code, Purpose purpose, String keyContext) {
 
         String fingerprint = fingerprint(email);
 
@@ -236,7 +336,7 @@ public class EmailVerificationService {
         Long attempts;
 
         try {
-            expected = redisTemplate.opsForValue().get(CODE_KEY_PREFIX + fingerprint);
+            expected = redisTemplate.opsForValue().get(codeKey(purpose, keyContext, fingerprint));
 
             if (expected == null) {
                 throw new InvalidRegistrationException(NO_CODE);
@@ -247,10 +347,10 @@ public class EmailVerificationService {
               or not it was right. Incrementing only on failure would let someone
               probe freely by watching which replies came back slower.
             */
-            attempts = redisTemplate.opsForValue().increment(ATTEMPT_KEY_PREFIX + fingerprint);
+            attempts = redisTemplate.opsForValue().increment(attemptKey(purpose, keyContext, fingerprint));
 
             // The counter is created by the increment above, so it needs its own expiry
-            redisTemplate.expire(ATTEMPT_KEY_PREFIX + fingerprint, CODE_LIFETIME);
+            redisTemplate.expire(attemptKey(purpose, keyContext, fingerprint), CODE_LIFETIME);
 
         } catch (DataAccessException ex) {
             log.error("Could not read a verification code: {}", ex.getClass().getSimpleName());
@@ -259,7 +359,7 @@ public class EmailVerificationService {
         }
 
         if (attempts != null && attempts > MAX_ATTEMPTS) {
-            discard(fingerprint); // burnt: a new code has to be requested
+            discard(fingerprint, purpose, keyContext); // burnt: a new code has to be requested
 
             throw new InvalidRegistrationException(TOO_MANY_ATTEMPTS);
         }
@@ -274,7 +374,22 @@ public class EmailVerificationService {
             throw new InvalidRegistrationException(WRONG_CODE);
         }
 
-        discard(fingerprint); // one code, one account
+        discard(fingerprint, purpose, keyContext); // one code, one use
+    }
+
+    /** The Redis key holding a purpose/context's code hash. */
+    private static String codeKey(Purpose purpose, String keyContext, String fingerprint) {
+        return purpose.codeKeyPrefix + keyContextSuffix(keyContext) + fingerprint;
+    }
+
+    /** The Redis key counting verification attempts for one purpose/context. */
+    private static String attemptKey(Purpose purpose, String keyContext, String fingerprint) {
+        return purpose.attemptKeyPrefix + keyContextSuffix(keyContext) + fingerprint;
+    }
+
+    /** Null contexts (registration) keep the legacy key shape exactly. */
+    private static String keyContextSuffix(String keyContext) {
+        return StringUtils.hasText(keyContext) ? keyContext + ":" : "";
     }
 
     /**
@@ -284,10 +399,10 @@ public class EmailVerificationService {
      * code with more than nine minutes left was necessarily issued less than a
      * minute ago.
      */
-    private long secondsUntilResendAllowed(String fingerprint) {
+    private long secondsUntilResendAllowed(String fingerprint, Purpose purpose, String keyContext) {
 
         try {
-            Long ttl = redisTemplate.getExpire(CODE_KEY_PREFIX + fingerprint, TimeUnit.SECONDS);
+            Long ttl = redisTemplate.getExpire(codeKey(purpose, keyContext, fingerprint), TimeUnit.SECONDS);
 
             if (ttl == null || ttl <= 0) {
                 return 0; // no code outstanding, or no expiry to read
@@ -304,17 +419,17 @@ public class EmailVerificationService {
     }
 
     /** Removes a code and its attempt counter, ignoring a Redis that is unwell. */
-    private void discard(String fingerprint) {
+    private void discard(String fingerprint, Purpose purpose, String keyContext) {
         try {
-            redisTemplate.delete(CODE_KEY_PREFIX + fingerprint);
-            redisTemplate.delete(ATTEMPT_KEY_PREFIX + fingerprint);
+            redisTemplate.delete(codeKey(purpose, keyContext, fingerprint));
+            redisTemplate.delete(attemptKey(purpose, keyContext, fingerprint));
         } catch (DataAccessException ex) {
             // The keys expire on their own, so this is not worth failing over
             log.warn("Could not clear a verification code: {}", ex.getClass().getSimpleName());
         }
     }
 
-    private SimpleMailMessage buildMessage(String email, String code) {
+    private SimpleMailMessage buildMessage(String email, String subject, String textBody) {
 
         SimpleMailMessage message = new SimpleMailMessage();
 
@@ -326,19 +441,21 @@ public class EmailVerificationService {
           common and does save a tap, but it also renders the code on a locked
           screen in a notification preview, where somebody else can read it.
         */
-        message.setSubject("Verify your Clean Bharat email address");
+        message.setSubject(subject);
 
         // Both languages, as everywhere else a person is addressed directly
-        message.setText(buildTextBody(code));
+        message.setText(textBody);
 
         return message;
     }
 
     /*
       Sends via Brevo HTTPS API (port 443) instead of SMTP (blocked on Render free tier).
-      Same subject/body as SMTP path; sender must be verified in Brevo dashboard.
+      The subject and body arrive ready-built, so both purposes ride this one
+      transport. Package-private rather than private purely as a test seam: the
+      delivery tests stub it instead of reaching the real Brevo endpoint.
     */
-    private void sendViaBrevo(String email, String code) {
+    void sendViaBrevo(String email, String subject, String textBody) {
         String senderEmail = StringUtils.hasText(from) ? from.trim()
                 : (username != null ? username.trim() : "");
         String apiKey = brevoApiKey != null ? brevoApiKey.trim() : "";
@@ -348,8 +465,8 @@ public class EmailVerificationService {
         Map<String, Object> body = Map.of(
                 "sender", Map.of("name", brevoSenderName, "email", senderEmail),
                 "to", List.of(Map.of("email", email)),
-                "subject", "Verify your Clean Bharat email address",
-                "textContent", buildTextBody(code));
+                "subject", subject,
+                "textContent", textBody);
 
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(10)); // bounded like SMTP timeouts above
@@ -366,7 +483,14 @@ public class EmailVerificationService {
                 .toBodilessEntity();
     }
 
-    private static String buildTextBody(String code) {
+    private static String buildTextBody(Purpose purpose, String code) {
+        return switch (purpose) {
+            case REGISTRATION -> registrationTextBody(code);
+            case PASSWORD_RESET -> passwordResetTextBody(code);
+        };
+    }
+
+    private static String registrationTextBody(String code) {
         return """
                 Clean Bharat - email verification
 
@@ -385,6 +509,32 @@ public class EmailVerificationService {
                 यह कोड 10 मिनट में समाप्त हो जाएगा। यदि आपने स्वच्छ भारत खाता
                 बनाने का प्रयास नहीं किया है, तो इस संदेश की अनदेखी करें - कोई
                 खाता नहीं बनाया गया है।
+                """.formatted(code, code);
+    }
+
+    private static String passwordResetTextBody(String code) {
+        return """
+                Clean Bharat - password recovery
+
+                You asked to reset your Clean Bharat account password because
+                the current one was forgotten. Your recovery code is: %s
+
+                Enter this code on your profile page to set a new password.
+                It expires in 10 minutes and can be used only once. If you did
+                not request a password reset, you can ignore this message -
+                your current password keeps working and nothing has changed.
+
+                ----------------------------------------------------------
+
+                स्वच्छ भारत - पासवर्ड पुनर्प्राप्ति
+
+                आपने अपना पासवर्ड भूलने के कारण Clean Bharat खाते का पासवर्ड
+                रीसेट करने का अनुरोध किया था। आपका रिकवरी कोड है: %s
+
+                नया पासवर्ड सेट करने के लिए इस कोड को अपने प्रोफ़ाइल पेज पर दर्ज
+                करें। यह कोड 10 मिनट में समाप्त हो जाएगा और केवल एक बार उपयोग
+                किया जा सकता है। यदि आपने पासवर्ड रीसेट का अनुरोध नहीं किया है,
+                तो इस संदेश की अनदेखी करें - आपका वर्तमान पासवर्ड काम करता रहेगा।
                 """.formatted(code, code);
     }
 
