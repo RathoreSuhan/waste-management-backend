@@ -752,7 +752,12 @@ selected district.
 - **Cleaner eligibility is district-wide and fail-closed.** A cleaner may work
   on eligible reports in any ULB inside their registered district, and never
   outside it. A missing district on either the account or the report means
-  the pair is simply not eligible - there is no city-string fallback.
+  the pair is simply not eligible - there is no city-string fallback. The
+  rule lives in one shared service and is re-proven on every cleaner action
+  path (listing, proposing, editing a proposal, starting work, the work
+  diary and completion proof), always after ownership is proven and before
+  any upload or write, so a historical out-of-district assignment refuses
+  cleanly instead of continuing.
 - **Leaderboards have four scopes.** National, state and city keep their
   exact existing behavior; the district board (`GET
   /api/leaderboard/district/{state}/{district}`) aggregates every ULB inside

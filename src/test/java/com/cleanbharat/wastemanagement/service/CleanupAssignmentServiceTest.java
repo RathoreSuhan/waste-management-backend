@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -87,6 +88,9 @@ class CleanupAssignmentServiceTest {
     @Mock private CloudinaryService cloudinaryService;
     @Mock private AICleanupVerificationService aiCleanupVerificationService;
 
+    // The real district rule, not a mock: these tests assert its exact decisions
+    @Spy private CleanerDistrictEligibility districtEligibility = new CleanerDistrictEligibility();
+
     @InjectMocks private CleanupAssignmentServiceImpl cleanupAssignmentService;
 
     @AfterEach
@@ -115,6 +119,91 @@ class CleanupAssignmentServiceTest {
 
         assertEquals(AssignmentStatus.ASSIGNED, assignment.getStatus()); // untouched
         assertNull(assignment.getStartedAt());
+        verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
+    }
+
+    // ---------------------------------------------------------------------
+    // DISTRICT-WIDE ELIGIBILITY ON THE ACTION PATHS
+    // ---------------------------------------------------------------------
+
+    @Test
+    void aHistoricalAssignmentFromAnotherDistrictCannotBeStarted() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.ASSIGNED, cleaner);
+        // Awarded before the district rule existed: the pair no longer matches,
+        // so the action must refuse without moving the row
+        assignment.getReport().setDistrict("Pune");
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.existsByAssignmentAndStageAndDecision(
+                assignment, ApprovalStage.PROPOSAL, ApprovalDecision.APPROVED)).thenReturn(true);
+
+        UnauthorizedAssignmentAccessException refused = assertThrows(
+                UnauthorizedAssignmentAccessException.class,
+                () -> cleanupAssignmentService.startCleanup(ASSIGNMENT_ID, SITE_LATITUDE, SITE_LONGITUDE));
+
+        assertTrue(refused.getMessage().contains("registered district"), refused.getMessage());
+        assertEquals(AssignmentStatus.ASSIGNED, assignment.getStatus()); // untouched
+        assertNull(assignment.getStartedAt());
+        verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
+    }
+
+    @Test
+    void anIdenticallyNamedDistrictInAnotherStateIsNeverEligible() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL); // Maharashtra / "Mumbai Suburban"
+        CleanupAssignment assignment = assignment(AssignmentStatus.ASSIGNED, cleaner);
+        // Same district NAME in a different state: the full pair must be compared
+        assignment.getReport().setState("Haryana");
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(approvalRepository.existsByAssignmentAndStageAndDecision(
+                assignment, ApprovalStage.PROPOSAL, ApprovalDecision.APPROVED)).thenReturn(true);
+
+        assertThrows(UnauthorizedAssignmentAccessException.class,
+                () -> cleanupAssignmentService.startCleanup(ASSIGNMENT_ID, SITE_LATITUDE, SITE_LONGITUDE));
+
+        verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
+    }
+
+    @Test
+    void aHistoricalAssignmentCannotBeStartedWhenTheDistrictWasNeverReconciled() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.CLAIMED, cleaner); // legacy row
+        assignment.getReport().setDistrict(null); // pre-directory report, not yet reconciled
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        UnauthorizedAssignmentAccessException refused = assertThrows(
+                UnauthorizedAssignmentAccessException.class,
+                () -> cleanupAssignmentService.startCleanup(ASSIGNMENT_ID, SITE_LATITUDE, SITE_LONGITUDE));
+
+        assertTrue(refused.getMessage().contains("reconciled"), refused.getMessage());
+        verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
+    }
+
+    @Test
+    void proofUploadIsRefusedOutsideTheDistrictBeforeAnySideEffect() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.IN_PROGRESS, cleaner);
+        assignment.getReport().setDistrict("Pune");
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        assertThrows(UnauthorizedAssignmentAccessException.class,
+                () -> cleanupAssignmentService.uploadCleanupImage(
+                        ASSIGNMENT_ID, proofImage(), SITE_LATITUDE, SITE_LONGITUDE));
+
+        // The refusal happened before the photograph reached Cloudinary or the AI
+        verifyNoInteractions(cloudinaryService);
+        verifyNoInteractions(aiCleanupVerificationService);
         verify(assignmentRepository, never()).save(any(CleanupAssignment.class));
     }
 

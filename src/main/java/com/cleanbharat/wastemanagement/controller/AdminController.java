@@ -27,7 +27,8 @@ public class AdminController {
 
 
     /**
-     * Search reports using title, city, state or pincode.
+     * Search reports using title, district, city/municipal area, state,
+     * pincode or address.
 
      * Example:
      * /api/admin/reports/search?keyword=patna&page=0&size=10
@@ -55,13 +56,16 @@ public class AdminController {
 
 
     /**
-     * Filter reports.
-     * Every filter parameter is optional.
+     * Filter reports by status and/or the geographical State + District pair.
+     * Every filter parameter is optional, but a district always means the
+     * district OF the given state - identically named districts in different
+     * states are different places. The exact city/ULB is deliberately not a
+     * filter here: it is a report's municipal area, not an administrative area.
 
      * Examples:
      * /api/admin/reports/filter?status=PENDING
-     * /api/admin/reports/filter?city=Patna
-     * /api/admin/reports/filter?status=RESOLVED&city=Gaya&page=1&size=25
+     * /api/admin/reports/filter?state=Bihar
+     * /api/admin/reports/filter?status=RESOLVED&state=Bihar&district=Gaya&page=1&size=25
      */
     @GetMapping("/reports/filter")
     public ResponseEntity<PageResponse<ReportResponse>> filterReports(
@@ -69,7 +73,7 @@ public class AdminController {
             ReportStatus status,
 
             @RequestParam(required = false)
-            String city,
+            String district,
 
             @RequestParam(required = false)
             String state,
@@ -89,7 +93,7 @@ public class AdminController {
         return ResponseEntity.ok(
                 adminService.filterReports(
                         status,
-                        city,
+                        district,
                         state,
                         page,
                         size,

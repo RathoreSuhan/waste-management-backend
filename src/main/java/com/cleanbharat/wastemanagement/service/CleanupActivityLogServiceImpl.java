@@ -35,6 +35,9 @@ public class CleanupActivityLogServiceImpl implements CleanupActivityLogService 
     private final UserRepository userRepository;
     private final CloudinaryService cloudinaryService; // optional per-entry evidence upload
 
+    // The one copy of the district-wide work rule (see the class for the full rule)
+    private final CleanerDistrictEligibility districtEligibility;
+
     @Override
     public CleanupActivityLogResponse addActivityLog(Long assignmentId,
                                                      CleanupActivityLogRequest request,
@@ -45,6 +48,13 @@ public class CleanupActivityLogServiceImpl implements CleanupActivityLogService 
         CleanupAssignment assignment = getOwnedAssignment(assignmentId, cleaner);
 
         validateWorkInProgress(assignment); // a diary only makes sense while work is running
+
+        /*
+         * District-wide eligibility, re-proven before any side effect: the
+         * refusal must happen before an evidence photograph reaches Cloudinary
+         * or a diary row is written.
+         */
+        districtEligibility.assertEligible(cleaner, assignment.getReport());
 
         /*
          * Evidence is optional (requirement 3 and 7): a cleaner may simply type

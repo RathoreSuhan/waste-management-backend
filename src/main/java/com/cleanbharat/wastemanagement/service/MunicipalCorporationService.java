@@ -2,6 +2,7 @@ package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
+import com.cleanbharat.wastemanagement.dto.MunicipalOfficerProfileRequest;
 
 import java.util.List;
 
@@ -33,8 +34,13 @@ public interface MunicipalCorporationService {
     // Update municipal corporation
     MunicipalCorporationResponse updateMunicipalCorporation(Long id, MunicipalCorporationRequest request);
 
-    // Update only the corporation represented by the authenticated municipal officer
-    MunicipalCorporationResponse updateOwnCorporation(String email, MunicipalCorporationRequest request);
+    /*
+      Update only the contact details of the corporation represented by the
+      authenticated municipal officer. The location identity (legacy city and
+      assigned ULB code) is deliberately not editable here - mapping stays
+      under the administrator's workflow.
+    */
+    MunicipalCorporationResponse updateOwnCorporation(String email, MunicipalOfficerProfileRequest request);
 
     // Delete municipal corporation
     void deleteMunicipalCorporation(Long id);

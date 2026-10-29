@@ -146,7 +146,8 @@ public class SecurityConfig {
 
                                 "/api/leaderboard",       // National leaderboard
                                 "/api/leaderboard/state/**", // State leaderboard
-                                "/api/leaderboard/city/**"   // City leaderboard
+                                "/api/leaderboard/district/**", // District leaderboard (all ULBs in one state/district pair)
+                                "/api/leaderboard/city/**"   // City leaderboard (legacy scope, kept for compatibility)
                         ).permitAll()
 
                         /*

@@ -119,4 +119,13 @@ class MunicipalCorporationControllerSecurityTest {
         mockMvc.perform(get("/api/municipal-corporations/city/Mohali"))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void theOfficerProfileUpdateStaysBehindAuthentication() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .put("/api/municipal-corporations/me")
+                        .contentType("application/json")
+                        .content("{\"organizationName\":\"X\",\"phone\":\"1\",\"email\":\"x@y.gov\"}"))
+                .andExpect(status().isForbidden());
+    }
 }

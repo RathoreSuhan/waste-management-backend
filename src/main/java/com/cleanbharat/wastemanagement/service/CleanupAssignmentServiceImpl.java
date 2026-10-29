@@ -49,6 +49,9 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
     // AI validation service (Gemini implementation behind interface)
     private final AICleanupVerificationService aiCleanupVerificationService;
 
+    // The one copy of the district-wide work rule (see the class for the full rule)
+    private final CleanerDistrictEligibility districtEligibility;
+
     /*
      * Rewards and the public feed entry are no longer created here.
      *
@@ -194,6 +197,13 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         }
 
         /*
+         * District-wide eligibility, re-proven before any state change: an
+         * assignment awarded before this rule existed (or reconciled since)
+         * must refuse here without moving the row, not silently continue.
+         */
+        districtEligibility.assertEligible(cleaner, assignment.getReport());
+
+        /*
          * Start-of-work location evidence.
          *
          * Reuses the same 50 m rule as the proof upload, so "work started" can
@@ -285,6 +295,14 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
         if (!WORK_IN_PROGRESS_STATUSES.contains(assignment.getStatus())) {
             throw new CleanupNotStartedException("Cleanup must be started before uploading the completion image.");
         }
+
+        /*
+         * District-wide eligibility, re-proven before any side effect: an
+         * assignment awarded before this rule existed (or reconciled since)
+         * must refuse here, before the photograph reaches Cloudinary or the
+         * AI, and before the assignment moves.
+         */
+        districtEligibility.assertEligible(cleaner, assignment.getReport());
 
         // Remembered so a rejected re-submission stays labelled as a re-do
         AssignmentStatus workingStatus = assignment.getStatus();
@@ -447,7 +465,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 .stream()
 
                 // Same district, any ULB inside it
-                .filter(assignment -> eligibleForDistrictWork(cleaner, assignment.getReport()))
+                .filter(assignment -> districtEligibility.isEligible(cleaner, assignment.getReport()))
 
                 // Entity -> DTO
                 .map(this::mapToResponse)
@@ -515,7 +533,7 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
                 .stream()
 
                 // Same district, any ULB inside it
-                .filter(assignment -> eligibleForDistrictWork(cleaner, assignment.getReport()))
+                .filter(assignment -> districtEligibility.isEligible(cleaner, assignment.getReport()))
 
                 // Entity -> DTO
                 .map(this::mapToResponse)
@@ -567,26 +585,6 @@ public class CleanupAssignmentServiceImpl implements CleanupAssignmentService {
             throw new UnauthorizedAssignmentAccessException("Only cleaners can access these APIs.");
         }
         return cleaner;
-    }
-
-
-    /**
-     * District-restricted work eligibility, fail-closed.
-     *
-     * A cleaner may act on eligible reports anywhere inside their REGISTERED
-     * DISTRICT - every supported ULB in it - but never outside it. Either
-     * side missing a reconciled district makes the pair ineligible: a legacy
-     * row stays invisible here until the migration's reconciliation pass maps
-     * it, and it is never authorized through a city-string fallback.
-     */
-    private boolean eligibleForDistrictWork(User cleaner, GarbageReport report) {
-
-        if (cleaner.getDistrict() == null || report.getDistrict() == null) {
-            return false;
-        }
-
-        return cleaner.getState().equalsIgnoreCase(report.getState())
-                && cleaner.getDistrict().equalsIgnoreCase(report.getDistrict());
     }
 
 

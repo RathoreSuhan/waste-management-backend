@@ -69,7 +69,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // Public paths that don't need JWT validation
         return path.startsWith("/api/auth/") ||     // Login & Register
                path.startsWith("/api/files/") ||    // File viewing
-               path.startsWith("/api/leaderboard") ||
+               (path.startsWith("/api/leaderboard") &&
+                       !path.equals("/api/leaderboard/me")) || // Public scopes; /me needs the caller's identity
                path.equals("/api/health") ||        // Wake-up ping, sent before sign-in
                path.equals("/actuator/health");     // Health check
     }

@@ -2,14 +2,17 @@ package com.cleanbharat.wastemanagement.service;
 
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
+import com.cleanbharat.wastemanagement.dto.MunicipalOfficerProfileRequest;
 import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.exception.EmailAlreadyExistsException;
 import com.cleanbharat.wastemanagement.exception.InvalidRegistrationException;
+import com.cleanbharat.wastemanagement.exception.LocationDataUnavailableException;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.repository.MunicipalCorporationRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
 import com.cleanbharat.wastemanagement.service.location.IndianLocationService.ResolvedLocation;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService.UlbDirectoryEntry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -160,23 +163,32 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
     /**
      * Municipal officers never supply an id: the authenticated email resolves
      * their one corporation, preventing a city from editing another city's record.
+     *
+     * Only the three contact details are applied. The officer profile request
+     * cannot carry a location change at all (the DTO has no such fields), so a
+     * stored legacy city and an assigned ULB code survive any profile save
+     * exactly as the administrator's mapping workflow left them.
      */
     @CacheEvict(value = "municipal_dashboard_stats", allEntries = true)
     @Override
     public MunicipalCorporationResponse updateOwnCorporation(
             String email,
-            MunicipalCorporationRequest request) {
+            MunicipalOfficerProfileRequest request) {
 
         MunicipalCorporation municipalCorporation = findCorporationByEmail(email);
         assertEmailIsFree(request.getEmail(), municipalCorporation.getId());
 
-        applyUpdate(municipalCorporation, request, municipalCorporation.getId());
+        municipalCorporation.setOrganizationName(request.getOrganizationName());
+        municipalCorporation.setPhone(request.getPhone());
+        municipalCorporation.setEmail(request.getEmail());
+        // City, ulbCode and password deliberately untouched: see the javadoc above.
 
         return mapToResponse(municipalCorporationRepository.save(municipalCorporation));
     }
 
     /*
-     * One update rule for both entry points (plan rule v4-1):
+     * The admin-side update rule (plan rule v4-1), reached only from
+     * updateMunicipalCorporation - the officer path no longer shares it:
      *
      * When the request carries the directory codes, it is a ULB mapping: the
      * row gains its ulb_code (uniqueness-guarded) while the stored city is
@@ -305,6 +317,42 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
                 .organizationName(municipalCorporation.getOrganizationName())
                 .phone(municipalCorporation.getPhone())
                 .email(municipalCorporation.getEmail())
+                .mappedLocation(mappedLocationOf(municipalCorporation))
                 .build();
+    }
+
+    /**
+     * The official directory home of the row's mapped ULB code, for the
+     * profile's jurisdiction display. A display-only enrichment: when the
+     * directory is temporarily unusable the profile still loads and the
+     * block answers null rather than failing the whole response, and no
+     * stored value is ever derived from it.
+     */
+    private MunicipalCorporationResponse.MappedLocation mappedLocationOf(
+            MunicipalCorporation municipalCorporation) {
+
+        if (!hasText(municipalCorporation.getUlbCode())) {
+            return null; // an unmapped row has nothing official to show
+        }
+
+        try {
+            UlbDirectoryEntry entry = indianLocationService.describeByUlbCode(
+                    municipalCorporation.getUlbCode(),
+                    municipalCorporation.getCity());
+
+            if (entry == null) {
+                return null; // unknown or ambiguous code: unavailable, never guessed
+            }
+
+            return MunicipalCorporationResponse.MappedLocation.builder()
+                    .state(entry.state())
+                    .district(entry.district())
+                    .ulbName(entry.ulb())
+                    .ulbType(entry.type())
+                    .build();
+
+        } catch (LocationDataUnavailableException unavailable) {
+            return null;
+        }
     }
 }

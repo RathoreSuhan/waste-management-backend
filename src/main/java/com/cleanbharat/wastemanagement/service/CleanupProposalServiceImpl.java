@@ -42,6 +42,9 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
     private final CleanupApprovalRepository approvalRepository; // reads and appends the decision ledger
     private final CloudinaryService cloudinaryService; // optional inspection evidence upload
 
+    // The one copy of the district-wide work rule (see the class for the full rule)
+    private final CleanerDistrictEligibility districtEligibility;
+
     /*
      * Clean Bharat platform rule (not a legal requirement): inspection evidence
      * is only accepted from within this radius of the reported site, so that a
@@ -71,7 +74,7 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
         GarbageReport report = assignment.getReport();
 
         validateAssignmentOpen(assignment); // cannot propose on awarded or finished work
-        validateCleanerLocation(cleaner, report); // city and state jurisdiction check
+        districtEligibility.assertEligible(cleaner, report); // state+district jurisdiction, fail-closed
 
         /*
          * The table is unique on (assignment_id, cleaner_id), so a cleaner only
@@ -164,6 +167,13 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
 
         CleanupAssignment assignment = proposal.getAssignment();
         validateAssignmentOpen(assignment); // site may have been awarded meanwhile
+
+        /*
+         * The rule is re-proven on every edit, before the revised photograph
+         * is uploaded or the row written: a proposal carried over from before
+         * the district rule (or a report reconciled since) must refuse here.
+         */
+        districtEligibility.assertEligible(cleaner, assignment.getReport());
 
         // The officer is waiting for this edit, so the resubmission must unlock their review buttons
         boolean answeringRevisionRequest = proposal.getStatus() == ProposalStatus.REVISION_REQUIRED;
@@ -263,32 +273,6 @@ public class CleanupProposalServiceImpl implements CleanupProposalService {
         if (assignment.getCleaner() != null || !OPEN_FOR_PROPOSALS.contains(assignment.getStatus())) {
             throw new InvalidProposalStateException(
                     "This cleanup site is no longer open for proposals.");
-        }
-    }
-
-    /*
-     * Cleaners work only inside their registered district - every supported
-     * ULB within it. Fail-closed: a missing district on the account or the
-     * report means the restriction cannot be proven, so the proposal is
-     * refused with a message that says so rather than matched on a city
-     * string (which could authorize work in a different district entirely).
-     */
-    private void validateCleanerLocation(User cleaner, GarbageReport report) {
-
-        if (cleaner.getDistrict() == null || report.getDistrict() == null) {
-            throw new UnauthorizedAssignmentAccessException(
-                    "Your work area cannot be verified because the district is missing on this "
-                            + "account or report. Cleanup work is restricted by district, so the "
-                            + "location needs to be reconciled first - please contact support.");
-        }
-
-        if (!cleaner.getState().equalsIgnoreCase(report.getState())) {
-            throw new UnauthorizedAssignmentAccessException(
-                    "You can only propose cleanups within your assigned state.");
-        }
-        if (!cleaner.getDistrict().equalsIgnoreCase(report.getDistrict())) {
-            throw new UnauthorizedAssignmentAccessException(
-                    "You can only propose cleanups within your registered district.");
         }
     }
 

@@ -44,6 +44,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -91,6 +92,10 @@ class CleanupProposalServiceTest {
 
     @Mock
     private CloudinaryService cloudinaryService;
+
+    // The real district rule, not a mock: these tests assert its exact decisions
+    @Spy
+    private CleanerDistrictEligibility districtEligibility = new CleanerDistrictEligibility();
 
     @InjectMocks
     private CleanupProposalServiceImpl cleanupProposalService;
@@ -153,6 +158,89 @@ class CleanupProposalServiceTest {
                         ASSIGNMENT_ID, request(SITE_LATITUDE, SITE_LONGITUDE)));
 
         assertTrue(refused.getMessage().contains("reconciled"), refused.getMessage());
+        verify(proposalRepository, never()).save(any(CleanupProposal.class));
+    }
+
+    @Test
+    void aCleanerFromAnotherUlbInTheSameDistrictMayPropose() {
+        // District-wide, not ULB-restricted: a Thane-registered cleaner may bid
+        // for a Mumbai site because both sit in the Mumbai Suburban district
+        User thaneCleaner = User.builder()
+                .id(2L)
+                .name("Cleaner 2")
+                .email(CLEANER_EMAIL)
+                .role(Role.ROLE_CLEANER)
+                .state("Maharashtra")
+                .city("Thane") // different ULB, same state + district
+                .district("Mumbai Suburban")
+                .build();
+        CleanupAssignment assignment = assignment(AssignmentStatus.PENDING, null);
+        authenticateAs(CLEANER_EMAIL);
+
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(thaneCleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+        when(proposalRepository.save(any(CleanupProposal.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        CleanupProposalResponse response = cleanupProposalService.submitProposal(
+                ASSIGNMENT_ID, request(SITE_LATITUDE, SITE_LONGITUDE));
+
+        assertEquals(ProposalStatus.SUBMITTED.name(), response.getStatus());
+        verify(proposalRepository).save(any(CleanupProposal.class));
+    }
+
+    @Test
+    void anIdenticallyNamedDistrictInAnotherStateIsRefused() {
+        // Same district NAME, different state: only the full pair may match
+        User crossStateCleaner = User.builder()
+                .id(2L)
+                .name("Cleaner 2")
+                .email(CLEANER_EMAIL)
+                .role(Role.ROLE_CLEANER)
+                .state("Haryana") // different state...
+                .city("Mumbai")
+                .district("Mumbai Suburban") // ...with the same district name
+                .build();
+        CleanupAssignment assignment = assignment(AssignmentStatus.PENDING, null);
+        authenticateAs(CLEANER_EMAIL);
+
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(crossStateCleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        UnauthorizedAssignmentAccessException refused = assertThrows(
+                UnauthorizedAssignmentAccessException.class,
+                () -> cleanupProposalService.submitProposal(
+                        ASSIGNMENT_ID, request(SITE_LATITUDE, SITE_LONGITUDE)));
+
+        assertTrue(refused.getMessage().contains("assigned state"), refused.getMessage());
+        verify(proposalRepository, never()).save(any(CleanupProposal.class));
+    }
+
+    @Test
+    void editingAProposalReprovesTheDistrictRuleBeforeAnySideEffect() {
+        // A historical proposal whose report has since drifted out of the
+        // cleaner's district (or was filed before the rule) cannot be revised
+        User cleaner = cleaner(1L, CLEANER_EMAIL);
+        GarbageReport crossDistrictReport = report();
+        crossDistrictReport.setDistrict("Pune");
+        CleanupAssignment assignment = CleanupAssignment.builder()
+                .id(ASSIGNMENT_ID)
+                .report(crossDistrictReport)
+                .cleaner(null) // site still open, so the edit path is reachable
+                .status(AssignmentStatus.PENDING)
+                .build();
+        CleanupProposal historical = proposal(assignment, cleaner, ProposalStatus.SUBMITTED);
+        authenticateAs(CLEANER_EMAIL);
+
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(proposalRepository.findById(PROPOSAL_ID)).thenReturn(Optional.of(historical));
+
+        assertThrows(UnauthorizedAssignmentAccessException.class,
+                () -> cleanupProposalService.updateProposal(
+                        PROPOSAL_ID, request(SITE_LATITUDE, SITE_LONGITUDE)));
+
+        // Refusal before any revised photograph is uploaded or row written
+        verify(cloudinaryService, never()).uploadFile(any(MultipartFile.class));
         verify(proposalRepository, never()).save(any(CleanupProposal.class));
     }
 

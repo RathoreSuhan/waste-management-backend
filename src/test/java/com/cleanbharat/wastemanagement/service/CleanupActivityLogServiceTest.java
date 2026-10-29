@@ -21,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -65,6 +66,9 @@ class CleanupActivityLogServiceTest {
     @Mock private CleanupAssignmentRepository assignmentRepository;
     @Mock private UserRepository userRepository;
     @Mock private CloudinaryService cloudinaryService;
+
+    // The real district rule, not a mock: these tests assert its exact decisions
+    @Spy private CleanerDistrictEligibility districtEligibility = new CleanerDistrictEligibility();
 
     @InjectMocks private CleanupActivityLogServiceImpl cleanupActivityLogService;
 
@@ -123,6 +127,27 @@ class CleanupActivityLogServiceTest {
         assertNotNull(response.getDistanceMeters());                 // recorded for the audit trail
         assertTrue(response.getDistanceMeters() < 1.0);              // standing on the reported spot
         verify(cloudinaryService).uploadFile(photo);
+    }
+
+    @Test
+    void aDiaryEntryIsRefusedForAnAssignmentOutsideTheCleanersDistrictBeforeAnySideEffect() {
+        User cleaner = cleaner(5L, CLEANER_EMAIL);
+        CleanupAssignment assignment = assignment(AssignmentStatus.IN_PROGRESS, cleaner);
+        // A historical assignment whose report no longer matches the cleaner's district
+        assignment.getReport().setDistrict("Pune");
+
+        authenticateAs(CLEANER_EMAIL);
+        when(userRepository.findByEmail(CLEANER_EMAIL)).thenReturn(Optional.of(cleaner));
+        when(assignmentRepository.findById(ASSIGNMENT_ID)).thenReturn(Optional.of(assignment));
+
+        assertThrows(UnauthorizedAssignmentAccessException.class,
+                () -> cleanupActivityLogService.addActivityLog(
+                        ASSIGNMENT_ID,
+                        request("Progress note from another district", SITE_LATITUDE, SITE_LONGITUDE),
+                        null));
+
+        verifyNoInteractions(cloudinaryService); // no evidence upload on a refused entry
+        verify(activityLogRepository, never()).save(any(CleanupActivityLog.class));
     }
 
     @Test
@@ -375,7 +400,9 @@ class CleanupActivityLogServiceTest {
                 .name("Cleaner " + id)
                 .email(email)
                 .role(Role.ROLE_CLEANER)
+                .state("Maharashtra")
                 .city("Mumbai")
+                .district("Mumbai Suburban") // reconciled directory-backed account
                 .build();
     }
 
@@ -387,6 +414,7 @@ class CleanupActivityLogServiceTest {
                 .address("MG Road")
                 .city("Mumbai")
                 .state("Maharashtra")
+                .district("Mumbai Suburban") // reconciled directory-backed report
                 .pincode("400001")
                 .latitude(SITE_LATITUDE)
                 .longitude(SITE_LONGITUDE)

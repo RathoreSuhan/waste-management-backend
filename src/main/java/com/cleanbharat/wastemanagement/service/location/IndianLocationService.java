@@ -13,9 +13,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -75,6 +77,10 @@ public class IndianLocationService {
     private Map<String, Set<String>> statesOfDistrict = Map.of();
     private Map<String, Set<String>> statesOfUlb = Map.of();
 
+    /* ULB code -> every directory home it appears under, for describing an
+       already-mapped row. Read-only display use; never a validation path. */
+    private Map<String, List<UlbDirectoryEntry>> ulbsByCode = Map.of();
+
     /**
      * Loads (or reloads) the bundled directory. Public so the migration
      * runner's tests - which live in another package - can drive it without
@@ -112,6 +118,7 @@ public class IndianLocationService {
         Map<String, String> ulbs = new HashMap<>();
         Map<String, Set<String>> districtHomes = new HashMap<>();
         Map<String, Set<String>> ulbHomes = new HashMap<>();
+        Map<String, List<UlbDirectoryEntry>> ulbsByCode = new HashMap<>();
 
         for (JsonNode state : root.path("states")) {
             String stateCode = required(state, "code");
@@ -124,9 +131,16 @@ public class IndianLocationService {
 
                 for (JsonNode ulb : district.path("ulbs")) {
                     String ulbCode = required(ulb, "code");
-                    required(ulb, "type"); // the dropdown shows it, so a row without one is malformed
-                    ulbs.put(stateCode + "/" + districtCode + "/" + ulbCode, required(ulb, "name"));
+                    String ulbType = required(ulb, "type"); // the dropdown shows it, so a row without one is malformed
+                    String ulbName = required(ulb, "name");
+                    ulbs.put(stateCode + "/" + districtCode + "/" + ulbCode, ulbName);
                     ulbHomes.computeIfAbsent(ulbCode, code -> new LinkedHashSet<>()).add(stateCode);
+                    ulbsByCode.computeIfAbsent(ulbCode, code -> new ArrayList<>())
+                            .add(new UlbDirectoryEntry(
+                                    states.get(stateCode),
+                                    districts.get(stateCode + "/" + districtCode),
+                                    ulbName,
+                                    ulbType));
                 }
             }
         }
@@ -140,6 +154,7 @@ public class IndianLocationService {
         this.ulbNames = ulbs;
         this.statesOfDistrict = districtHomes;
         this.statesOfUlb = ulbHomes;
+        this.ulbsByCode = ulbsByCode;
         this.document = root; // published last: it is what marks the service usable
     }
 
@@ -328,6 +343,61 @@ public class IndianLocationService {
         public boolean mapped() {
             return location != null;
         }
+    }
+
+    /**
+     * Describes the official directory home of an already-mapped ULB code,
+     * for read-only display on a Municipal Corporation profile.
+     *
+     * This is NOT a validation path: the caller's ulbCode was accepted by
+     * {@link #resolve} when an administrator mapped the row, and nothing
+     * here re-decides what is real. A code the workbook lists under more
+     * than one district is disambiguated against the row's stored canonical
+     * ULB name; when even that leaves several homes (or the stored name has
+     * drifted) the answer is null rather than a guess - the profile then
+     * shows an unavailable mapping instead of a possibly wrong district.
+     *
+     * @return the single described home, or null when unknown/ambiguous
+     * @throws LocationDataUnavailableException when the directory itself is
+     *         unusable - a caller enriching a display decides how to degrade
+     */
+    public UlbDirectoryEntry describeByUlbCode(String ulbCode, String storedCityName) {
+
+        requireDirectory();
+
+        if (!StringUtils.hasText(ulbCode)) {
+            return null;
+        }
+
+        List<UlbDirectoryEntry> homes = ulbsByCode.get(ulbCode.trim());
+
+        if (homes == null || homes.isEmpty()) {
+            return null;
+        }
+
+        if (homes.size() == 1) {
+            return homes.get(0);
+        }
+
+        if (!StringUtils.hasText(storedCityName)) {
+            return null;
+        }
+
+        String wanted = LocationUtil.normalizeLocation(storedCityName);
+
+        List<UlbDirectoryEntry> byName = homes.stream()
+                .filter(home -> LocationUtil.normalizeLocation(home.ulb()).equals(wanted))
+                .toList();
+
+        return byName.size() == 1 ? byName.get(0) : null;
+    }
+
+    /**
+     * The directory's description of one ULB home: the canonical state,
+     * district and ULB names plus the body type, all as the workbook spells
+     * them (not LocationUtil-normalised - display text, not match keys).
+     */
+    public record UlbDirectoryEntry(String state, String district, String ulb, String type) {
     }
 
     /**

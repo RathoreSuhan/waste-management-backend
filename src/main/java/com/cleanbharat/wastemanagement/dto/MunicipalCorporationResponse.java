@@ -13,4 +13,22 @@ public class MunicipalCorporationResponse {
     private String organizationName; // Municipal corporation name
     private String phone; // Contact number
     private String email; // Contact email
+
+    /*
+      The official jurisdiction the mapped ulbCode resolves to in the LGD
+      directory: state, district, ULB name and body type. Null when the row
+      has no mapping, the directory cannot describe the code, or the code is
+      ambiguous even against the stored city - never a guessed location.
+    */
+    private MappedLocation mappedLocation;
+
+    @Data
+    @Builder
+    public static class MappedLocation {
+
+        private String state; // Official state name
+        private String district; // Official district name
+        private String ulbName; // Official ULB / municipal-area name
+        private String ulbType; // ULB type (Municipal Corporation, Council, ...)
+    }
 }

@@ -25,6 +25,7 @@ import com.cleanbharat.wastemanagement.service.deletion.ReportDeletionService;
 import java.time.LocalDateTime;
 import com.cleanbharat.wastemanagement.exception.UserDeletionNotAllowedException;
 import com.cleanbharat.wastemanagement.service.deletion.UserDeletionService;
+import com.cleanbharat.wastemanagement.util.LocationUtil;
 import com.cleanbharat.wastemanagement.util.PaginationUtil;
 
 import java.util.List;
@@ -352,7 +353,7 @@ public class AdminServiceImpl implements AdminService {
     @Override
     public PageResponse<ReportResponse> filterReports(
             ReportStatus status,
-            String city,
+            String district,
             String state,
             int page,
             int size,
@@ -371,17 +372,30 @@ public class AdminServiceImpl implements AdminService {
                 )
         );
 
-        // Filter reports using optional parameters
+        /*
+         * Both parts of the geographical pair are normalised the way every
+         * canonical location is stored, so a request spelling "  gaya " or
+         * "Mumbai  suburban" matches the same rows the exact directory name
+         * would. The state travels with the district: identically named
+         * districts in different states are different places.
+         */
         Page<GarbageReport> reports =
                 garbageReportRepository.filterReportsPaged(
                         status,
-                        city,
-                        state,
+                        normalizeOrBlank(district),
+                        normalizeOrBlank(state),
                         pageable
                 );
 
         // Entity -> DTO
         return PageResponse.from(reports, reportMapper::toResponse);
+    }
+
+    /** Whitespace-collapsed, title-cased location filter input; blank stays blank ("no filter"). */
+    private String normalizeOrBlank(String value) {
+        return (value == null || value.isBlank())
+                ? ""
+                : LocationUtil.normalizeLocation(value);
     }
 
     @Override

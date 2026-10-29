@@ -2,6 +2,7 @@ package com.cleanbharat.wastemanagement.controller;
 
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
+import com.cleanbharat.wastemanagement.dto.MunicipalOfficerProfileRequest;
 import com.cleanbharat.wastemanagement.service.MunicipalCorporationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -67,11 +68,16 @@ public class MunicipalCorporationController {
         return municipalCorporationService.updateMunicipalCorporation(id, request);
     }
 
-    /** Updates only the corporation belonging to the authenticated officer. */
+    /**
+     * Updates only the contact details of the corporation belonging to the
+     * authenticated officer. The request DTO carries no location fields, so
+     * the stored legacy city and the administrator-assigned ULB mapping can
+     * never change through this endpoint.
+     */
     @PutMapping("/me")
     public MunicipalCorporationResponse updateOwnMunicipalCorporation(
             Authentication authentication,
-            @Valid @RequestBody MunicipalCorporationRequest request) {
+            @Valid @RequestBody MunicipalOfficerProfileRequest request) {
 
         return municipalCorporationService.updateOwnCorporation(authentication.getName(), request);
     }

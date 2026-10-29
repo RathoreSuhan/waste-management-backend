@@ -270,6 +270,90 @@ class IndianLocationServiceTest {
         assertEquals(null, service.matchByNames("Bihar", "  ").location());
     }
 
+    // ------------------------------------------------------------------
+    // Describing an already-mapped ULB code (display only)
+    // ------------------------------------------------------------------
+
+    @Test
+    void aMappedUlbCodeDescribesItsOfficialHome() {
+        var entry = service.describeByUlbCode("248325", "Mohali");
+
+        assertNotNull(entry);
+        assertEquals("Punjab", entry.state());
+        assertEquals("S.A.S Nagar", entry.district());
+        assertEquals("S.A.S.Nagar - Mohali", entry.ulb());
+        assertEquals("Municipal Corporation", entry.type());
+    }
+
+    @Test
+    void anUnknownUlbCodeDescribesNothing() {
+        assertEquals(null, service.describeByUlbCode("000000", "Mohali"));
+    }
+
+    @Test
+    void aBlankCodeDescribesNothing() {
+        assertEquals(null, service.describeByUlbCode(null, "Mohali"));
+        assertEquals(null, service.describeByUlbCode("  ", "Mohali"));
+    }
+
+    @Test
+    void aRepeatedCodeWithTheSameNameEverywhereDescribesNothingRatherThanGuessing() {
+
+        // Every code the real workbook lists under more than one district
+        // carries the same name at each home, so the stored name cannot pick
+        // between them and the honest answer is "unavailable"
+        Map<String, Map<String, String>> placesByCode = new LinkedHashMap<>();
+        for (JsonNode state : directory.path("states")) {
+            for (JsonNode district : state.path("districts")) {
+                for (JsonNode ulb : district.path("ulbs")) {
+                    placesByCode
+                            .computeIfAbsent(ulb.path("code").asText(), code -> new LinkedHashMap<>())
+                            .putIfAbsent(
+                                    state.path("code").asText() + "/" + district.path("code").asText(),
+                                    ulb.path("name").asText());
+                }
+            }
+        }
+
+        var repeated = placesByCode.entrySet().stream()
+                .filter(entry -> entry.getValue().size() > 1)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "the workbook is expected to list at least one ULB under several districts"));
+
+        String ambiguousCode = repeated.getKey();
+        String sharedName = repeated.getValue().values().iterator().next();
+
+        assertEquals(null, service.describeByUlbCode(ambiguousCode, sharedName));
+    }
+
+    @Test
+    void anAmbiguousUlbCodeIsDisambiguatedByTheStoredCityName() throws Exception {
+
+        // The real workbook never repeats a code under different names, so a
+        // fixture supplies the distinct-name case the disambiguation exists for
+        IndianLocationService fixtureService = new IndianLocationService(new ObjectMapper());
+        fixtureService.index(new ObjectMapper().readTree("""
+                {"states":[{"code":"1","name":"Test State","districts":[
+                  {"code":"11","name":"District One","ulbs":[
+                     {"code":"900001","name":"Twin Town","type":"Nagar Panchayat"}]},
+                  {"code":"12","name":"District Two","ulbs":[
+                     {"code":"900001","name":"Twin Town West","type":"Nagar Panchayat"}]}
+                ]}]}
+                """));
+
+        var first = fixtureService.describeByUlbCode("900001", "Twin Town");
+        assertNotNull(first);
+        assertEquals("District One", first.district());
+
+        var second = fixtureService.describeByUlbCode("900001", "Twin Town West");
+        assertNotNull(second);
+        assertEquals("District Two", second.district());
+
+        // A name that matches no home stays unanswered rather than guessed
+        assertEquals(null, fixtureService.describeByUlbCode("900001", "Definitely Not A Ulb"));
+    }
+
     private static JsonNode stateByCode(String code) {
         for (JsonNode state : directory.path("states")) {
             if (code.equals(state.path("code").asText())) {

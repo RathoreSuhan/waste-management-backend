@@ -171,6 +171,7 @@ class AdminServicePaginationTest {
                 .address("Temple Lane")
                 .city("Gaya")
                 .state("Bihar")
+                .district("Gaya")
                 .pincode("823001")
                 .status(ReportStatus.IN_PROGRESS)
                 .urgencyScore(3.0)
@@ -187,7 +188,7 @@ class AdminServicePaginationTest {
                 adminService.filterReports(
                         ReportStatus.IN_PROGRESS,
                         "Gaya",
-                        null,
+                        "Bihar",
                         0,
                         10,
                         null,
@@ -197,12 +198,30 @@ class AdminServicePaginationTest {
         verify(garbageReportRepository).filterReportsPaged(
                 eq(ReportStatus.IN_PROGRESS),
                 eq("Gaya"),
-                isNull(),
+                eq("Bihar"),
                 any(Pageable.class)
         );
 
         assertEquals("Neha Gupta", response.content().get(0).getReportedBy());
         assertEquals(1, response.totalElements());
+    }
+
+    @Test
+    void reportFilterNormalisesTheDistrictAndStatePair() {
+        // Raw input is normalised the way canonical locations are stored, so
+        // stray whitespace or casing cannot miss the rows it should find
+        when(garbageReportRepository.filterReportsPaged(
+                any(), any(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        adminService.filterReports(null, "  gaya ", "BIHAR", 0, 10, null, null);
+
+        verify(garbageReportRepository).filterReportsPaged(
+                isNull(),
+                eq("Gaya"),
+                eq("Bihar"),
+                any(Pageable.class)
+        );
     }
 
     @Test

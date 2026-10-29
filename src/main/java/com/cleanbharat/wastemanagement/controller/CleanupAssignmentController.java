@@ -144,10 +144,8 @@ public class CleanupAssignmentController {
     /**
      * Returns nearby assignments.
      * Current implementation:
-     * Returns all pending assignments.
-
-     * Future:
-     * Filter using Google Maps distance.
+     * Returns the open assignments inside the cleaner's registered
+     * state + district - every ULB in the district, nothing outside it.
      */
     @GetMapping("/nearby")
     public ResponseEntity<List<CleanupAssignmentResponse>> getNearbyAssignments() {

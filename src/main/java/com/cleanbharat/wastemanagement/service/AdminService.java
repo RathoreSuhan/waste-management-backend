@@ -78,8 +78,8 @@ public interface AdminService {
     SuccessResponse promoteCitizenToAdmin(Long userId);
 
     /**
-     * One page of reports matching a keyword against title, city, state
-     * or pincode.
+     * One page of reports matching a keyword against title, district, city,
+     * state, pincode or address.
      */
     PageResponse<ReportResponse> searchReports(
             String keyword,
@@ -90,12 +90,18 @@ public interface AdminService {
     );
 
     /**
-     * One page of reports matching any combination of status, city and
-     * state.
+     * One page of reports matching any combination of status and the
+     * geographical State + District pair.
+     *
+     * The district is the administrative area the location model filters by;
+     * it is read together with the state so identically named districts in
+     * different states never mix. Input is normalised the way every
+     * canonical location is stored, and a legacy report whose district was
+     * never reconciled matches no district filter.
      */
     PageResponse<ReportResponse> filterReports(
             ReportStatus status,
-            String city,
+            String district,
             String state,
             int page,
             int size,

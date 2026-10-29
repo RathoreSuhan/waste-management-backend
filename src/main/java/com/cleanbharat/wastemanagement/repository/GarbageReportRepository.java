@@ -135,11 +135,13 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
      * point of paging. The countQuery is written out rather than derived,
      * because Spring cannot infer one from this WHERE clause.
      *
-     * Address is matched as well as title, city, state and pincode. That is
-     * not an accident of this rewrite: the public register used to search
-     * address on the client, over the full list it had downloaded. Now that
-     * the search runs in the database, leaving address out would quietly
-     * stop matching an address the register used to find.
+     * Address is matched as well as title, district, city, state and pincode.
+     * That is not an accident of this rewrite: the public register used to
+     * search address on the client, over the full list it had downloaded. Now
+     * that the search runs in the database, leaving address out would quietly
+     * stop matching an address the register used to find. District is matched
+     * too - the administrative area the location model now filters by - and a
+     * legacy row with a NULL district simply never matches it.
      */
     @Query(
             value = """
@@ -147,6 +149,7 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
                 FROM GarbageReport r
                 WHERE
                       LOWER(r.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                   OR LOWER(r.district) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(r.city) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(r.state) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(r.pincode) LIKE LOWER(CONCAT('%', :keyword, '%'))
@@ -157,6 +160,7 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
                 FROM GarbageReport r
                 WHERE
                       LOWER(r.title) LIKE LOWER(CONCAT('%', :keyword, '%'))
+                   OR LOWER(r.district) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(r.city) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(r.state) LIKE LOWER(CONCAT('%', :keyword, '%'))
                    OR LOWER(r.pincode) LIKE LOWER(CONCAT('%', :keyword, '%'))
@@ -167,7 +171,14 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
 
 
     /**
-     * Filters reports by optional status, city and state.
+     * Filters reports by optional status, district and state.
+     *
+     * The geographical filter is the DISTRICT, always sent together with the
+     * state: identically named districts in different states are different
+     * places, so the pair is what identifies the area. Comparison is exact
+     * and case-insensitive against the stored canonical names. A legacy row
+     * whose district was never reconciled (NULL) matches no district filter -
+     * intentional fail-closed behaviour, never silently assigned to one.
      */
     @Query("""
         SELECT r
@@ -175,14 +186,14 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
         WHERE
             (CAST(:status AS string) IS NULL OR r.status = :status)
         AND
-            (COALESCE(:city,'')='' OR LOWER(r.city)=LOWER(:city))
+            (COALESCE(:district,'')='' OR LOWER(r.district)=LOWER(:district))
         AND
             (COALESCE(:state,'')='' OR LOWER(r.state)=LOWER(:state))
         ORDER BY r.createdAt DESC
         """)
     List<GarbageReport> filterReports(
             @Param("status") ReportStatus status,
-            @Param("city") String city,
+            @Param("district") String district,
             @Param("state") String state
     );
 
@@ -206,7 +217,7 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
                 WHERE
                     (CAST(:status AS string) IS NULL OR r.status = :status)
                 AND
-                    (COALESCE(:city,'')='' OR LOWER(r.city)=LOWER(:city))
+                    (COALESCE(:district,'')='' OR LOWER(r.district)=LOWER(:district))
                 AND
                     (COALESCE(:state,'')='' OR LOWER(r.state)=LOWER(:state))
                 """,
@@ -216,14 +227,14 @@ public interface GarbageReportRepository extends JpaRepository<GarbageReport, Lo
                 WHERE
                     (CAST(:status AS string) IS NULL OR r.status = :status)
                 AND
-                    (COALESCE(:city,'')='' OR LOWER(r.city)=LOWER(:city))
+                    (COALESCE(:district,'')='' OR LOWER(r.district)=LOWER(:district))
                 AND
                     (COALESCE(:state,'')='' OR LOWER(r.state)=LOWER(:state))
                 """
     )
     Page<GarbageReport> filterReportsPaged(
             @Param("status") ReportStatus status,
-            @Param("city") String city,
+            @Param("district") String district,
             @Param("state") String state,
             Pageable pageable
     );
