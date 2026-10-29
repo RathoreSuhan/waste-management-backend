@@ -8,13 +8,15 @@ import com.cleanbharat.wastemanagement.enums.AssignmentStatus;
 import com.cleanbharat.wastemanagement.enums.BadgeType;
 import com.cleanbharat.wastemanagement.enums.LeaderboardType;
 import com.cleanbharat.wastemanagement.enums.Role;
+import com.cleanbharat.wastemanagement.exception.LocationDataUnavailableException;
 import com.cleanbharat.wastemanagement.exception.ResourceNotFoundException;
 import com.cleanbharat.wastemanagement.exception.UnauthorizedAssignmentAccessException;
 import com.cleanbharat.wastemanagement.repository.CleanupAssignmentRepository;
 import com.cleanbharat.wastemanagement.repository.UserRepository;
-import com.cleanbharat.wastemanagement.util.LocationUtil;
+import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,16 @@ public class LeaderboardServiceImpl implements LeaderboardService {
 
     // Cleanup assignment repository
     private final CleanupAssignmentRepository cleanupAssignmentRepository;
+
+    // The location directory: resolves a submitted city name to its official ULB identity
+    private final IndianLocationService indianLocationService;
+
+    /*
+     * The boards rank the top ten cleaners by reward points; the ordering
+     * itself lives in each finder's JPQL, so this fixed first page only
+     * carries the limit.
+     */
+    private static final PageRequest TOP_TEN = PageRequest.of(0, 10);
 
     /*
      * @Cacheable(value = "leaderboard_top", key = "'national'")
@@ -111,13 +123,17 @@ public class LeaderboardServiceImpl implements LeaderboardService {
     @Override
     public LeaderboardResponse getStateLeaderboard(String state) {
 
-        state = LocationUtil.normalizeLocation(state);
+        /*
+         * Trimmed, never title-cased: the frontend submits the directory's
+         * canonical spelling, and folding "S.A.S Nagar" into "S.a.s Nagar"
+         * would corrupt it. Matching tolerates casing and stray whitespace
+         * in the finder (LOWER(TRIM(...)) on both sides); display keeps the
+         * submitted label exactly as the directory spells it.
+         */
+        state = state.trim();
 
         List<User> cleaners =
-                userRepository.findTop10ByRoleAndStateOrderByRewardPointsDesc(
-                        Role.ROLE_CLEANER,
-                        state
-                );
+                userRepository.findTop10InState(Role.ROLE_CLEANER, state, TOP_TEN);
 
         if (cleaners.isEmpty()) {
 
@@ -141,32 +157,88 @@ public class LeaderboardServiceImpl implements LeaderboardService {
      * @Cacheable(value = "leaderboard_top", key = "'city:' + #city.toLowerCase()")
      *
      * CITY LEADERBOARD CACHING:
-     *   Same pattern as state leaderboard.
-     *   Key = "city:kolkata", "city:delhi", etc.
+     *   Same pattern as the state leaderboard. The key derives from the
+     *   submitted name, so casing variants collapse into one entry and the
+     *   resolution inside the method (a pure function of the input) can
+     *   never disagree with the key.
      *
      * WHY SEPARATE KEYS FOR EACH LEVEL:
-     *   National, state, and city leaderboards are stored
+     *   National, state, city, and district leaderboards are stored
      *   in the SAME Redis cache (leaderboard_top) but with
      *   different key prefixes. This keeps related data
      *   grouped while preventing cross-contamination.
      *
      *   When a cleaner earns points (rewardCleaner runs):
      *     @CacheEvict(value = "leaderboard_top", allEntries = true)
-     *   evicts ALL leaderboard entries (national, all states, all cities).
-     *   This guarantees NO stale rankings anywhere.
+     *   evicts ALL leaderboard entries (national, all states, cities,
+     *   districts). This guarantees NO stale rankings anywhere.
      * ============================================================
      */
     @Cacheable(value = "leaderboard_top", key = "'city:' + #city.toLowerCase()")
     @Override
     public LeaderboardResponse getCityLeaderboard(String city) {
 
-        city = LocationUtil.normalizeLocation(city);
+        /*
+         * Two supported shapes, deliberately not merged:
+         *
+         * OFFICIAL ULB NAME - the submitted name resolves through the
+         * location directory to one ULB code, and the board is read by that
+         * identity. Rows keep whatever legacy city value they were
+         * registered with (e.g. "Mohali"), so a code-backed read is the only
+         * way an official name can find them. The board displays the
+         * directory's canonical ULB name, never a re-folded form.
+         *
+         * LEGACY CITY - anything that does not resolve to exactly one
+         * directory ULB (unknown, ambiguous, or the directory being
+         * unavailable) searches the stored city value the way the board
+         * always has, now tolerant of casing and stray whitespace.
+         *
+         * The scope stays one municipal jurisdiction either way: a ULB
+         * search never widens into its district.
+         */
+        city = city.trim();
+
+        String ulbCode = null;
+        String canonicalUlbName = null;
+
+        try {
+            IndianLocationService.NameMatch match =
+                    indianLocationService.matchByCityName(city);
+
+            if (match.mapped()) {
+                ulbCode = match.location().ulbCode();
+                canonicalUlbName = match.location().city();
+            }
+        } catch (LocationDataUnavailableException unavailable) {
+            // The directory is down: fall back to the legacy city search
+            // rather than failing the whole public page.
+        }
+
+        if (ulbCode != null) {
+
+            List<User> cleaners =
+                    userRepository.findTop10ByUlbCode(Role.ROLE_CLEANER, ulbCode, TOP_TEN);
+
+            if (cleaners.isEmpty()) {
+
+                return LeaderboardResponse.builder()
+                        .leaderboardType(LeaderboardType.CITY)
+                        .location(canonicalUlbName)
+                        .message("No leaderboard data available for city '" + canonicalUlbName + "'.")
+                        .leaderboard(new ArrayList<>())
+                        .build();
+            }
+
+            return buildLeaderboardResponse(
+                    cleaners,
+                    LeaderboardType.CITY,
+                    canonicalUlbName,
+                    "Top Cleaners in " + canonicalUlbName
+            );
+        }
 
         List<User> cleaners =
-                userRepository.findTop10ByRoleAndCityOrderByRewardPointsDesc(
-                        Role.ROLE_CLEANER,
-                        city
-                );
+                userRepository.findTop10InCity(Role.ROLE_CLEANER, city, TOP_TEN);
 
         if (cleaners.isEmpty()) {
 
@@ -189,37 +261,32 @@ public class LeaderboardServiceImpl implements LeaderboardService {
     /*
      * @Cacheable(value = "leaderboard_top", key = "'district:' + #state.toLowerCase() + '|' + #district.toLowerCase()")
      *
-     * DISTRICT LEADERBOARD (added by the location refactor):
+     * DISTRICT LEADERBOARD:
      *   Both parts of the (state, district) identity are required and both
      *   are in the key, so "Aurangabad" in Bihar and "Aurangabad" in
      *   Maharashtra can never share an entry, and one district's board
      *   aggregates every ULB inside it rather than splitting per city.
      *
-     *   The stored district and state are canonical LocationUtil shapes from
-     *   the directory (registration) or the reconciliation pass, and the
-     *   typed input is normalised the same way before the exact match - the
-     *   identical convention the state and city boards already use.
+     *   The inputs are trimmed but never title-cased: the frontend submits
+     *   the directory's canonical spellings ("S.A.S Nagar"), and folding
+     *   them ("S.a.s Nagar") both corrupted the display and missed rows
+     *   stored under any other casing. Matching is LOWER(TRIM(...)) on both
+     *   sides in the finder, so every stored casing variant is one district.
      *
      *   Same cache, same TTL, same eviction: RewardServiceImpl and the
      *   completion approval already evict every 'leaderboard_top' entry with
-     *   allEntries = true, which now covers district keys for free. The
-     *   legacy city scope stays exactly as it is (v6-1) until the documented
-     *   cleanup retires it.
+     *   allEntries = true, which covers district keys for free.
      */
     @Cacheable(value = "leaderboard_top",
             key = "'district:' + #state.toLowerCase() + '|' + #district.toLowerCase()")
     @Override
     public LeaderboardResponse getDistrictLeaderboard(String state, String district) {
 
-        state = LocationUtil.normalizeLocation(state);
-        district = LocationUtil.normalizeLocation(district);
+        state = state.trim();
+        district = district.trim();
 
         List<User> cleaners =
-                userRepository.findTop10ByRoleAndStateAndDistrictOrderByRewardPointsDesc(
-                        Role.ROLE_CLEANER,
-                        state,
-                        district
-                );
+                userRepository.findTop10InDistrict(Role.ROLE_CLEANER, state, district, TOP_TEN);
 
         if (cleaners.isEmpty()) {
 

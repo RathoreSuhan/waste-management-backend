@@ -81,6 +81,12 @@ public class IndianLocationService {
        already-mapped row. Read-only display use; never a validation path. */
     private Map<String, List<UlbDirectoryEntry>> ulbsByCode = Map.of();
 
+    /* Normalized ULB name -> the codes listed under it, so a submitted
+       city/ULB name can resolve to the identity rows are stored with.
+       Built with the same normalization on both sides, so comparison is
+       deterministic while the directory's own spelling stays on display. */
+    private Map<String, Set<String>> ulbCodesByNormalizedName = Map.of();
+
     /**
      * Loads (or reloads) the bundled directory. Public so the migration
      * runner's tests - which live in another package - can drive it without
@@ -119,6 +125,7 @@ public class IndianLocationService {
         Map<String, Set<String>> districtHomes = new HashMap<>();
         Map<String, Set<String>> ulbHomes = new HashMap<>();
         Map<String, List<UlbDirectoryEntry>> ulbsByCode = new HashMap<>();
+        Map<String, Set<String>> codesByName = new HashMap<>();
 
         for (JsonNode state : root.path("states")) {
             String stateCode = required(state, "code");
@@ -141,6 +148,10 @@ public class IndianLocationService {
                                     districts.get(stateCode + "/" + districtCode),
                                     ulbName,
                                     ulbType));
+                    codesByName.computeIfAbsent(
+                                    LocationUtil.normalizeLocation(ulbName),
+                                    name -> new LinkedHashSet<>())
+                            .add(ulbCode);
                 }
             }
         }
@@ -155,6 +166,7 @@ public class IndianLocationService {
         this.statesOfDistrict = districtHomes;
         this.statesOfUlb = ulbHomes;
         this.ulbsByCode = ulbsByCode;
+        this.ulbCodesByNormalizedName = codesByName;
         this.document = root; // published last: it is what marks the service usable
     }
 
@@ -330,6 +342,62 @@ public class IndianLocationService {
                         LocationUtil.normalizeLocation(districtNames.get(stateCode + "/" + districtCode)),
                         LocationUtil.normalizeLocation(matchedUlbName),
                         ulbCode),
+                null);
+    }
+
+    /**
+     * Resolves a submitted city/ULB name to its directory identity, for the
+     * city leaderboard's official-ULB lookup.
+     *
+     * Unlike {@link #matchByNames}, no state accompanies the name: the match
+     * is by ULB name alone across the whole workbook. Both sides go through
+     * the same normalization, so 'S.A.S.Nagar - Mohali', 's.a.s.nagar -
+     * mohali' and padded variants all resolve while the returned record
+     * carries the directory's own spellings - the caller displays them
+     * as-is rather than re-folding them into title case.
+     *
+     * A name shared by several DISTINCT ULB codes is deliberately
+     * unmatched: this lookup must never pick one municipality over
+     * another. (One code listed under several districts is one identity,
+     * and resolves normally.)
+     *
+     * This is a read/display path, never a validation path - accepting a
+     * report still goes through {@link #resolve} with codes.
+     *
+     * @return a {@link NameMatch} whose location is null when the name is
+     *         unknown or ambiguous; {@code reason} then says exactly why
+     * @throws LocationDataUnavailableException when the directory itself is
+     *         unusable - callers that can degrade to a legacy lookup catch it
+     */
+    public NameMatch matchByCityName(String cityName) {
+
+        requireDirectory();
+
+        if (!StringUtils.hasText(cityName)) {
+            return new NameMatch(null, "missing city value");
+        }
+
+        String wanted = LocationUtil.normalizeLocation(cityName.trim());
+
+        Set<String> codes = ulbCodesByNormalizedName.getOrDefault(wanted, Set.of());
+
+        if (codes.isEmpty()) {
+            return new NameMatch(null, "no directory ULB named '" + wanted + "'");
+        }
+
+        if (codes.size() > 1) {
+            return new NameMatch(null, "the name '" + wanted
+                    + "' is shared by " + codes.size() + " directory ULBs");
+        }
+
+        String ulbCode = codes.iterator().next();
+
+        // The code's homes all carry the same ULB name by construction of
+        // the match; the first home supplies the display details
+        UlbDirectoryEntry entry = ulbsByCode.get(ulbCode).get(0);
+
+        return new NameMatch(
+                new ResolvedLocation(entry.state(), entry.district(), entry.ulb(), ulbCode),
                 null);
     }
 

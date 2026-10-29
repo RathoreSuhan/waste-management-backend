@@ -354,6 +354,78 @@ class IndianLocationServiceTest {
         assertEquals(null, fixtureService.describeByUlbCode("900001", "Definitely Not A Ulb"));
     }
 
+    // ------------------------------------------------------------------
+    // Resolving a submitted city/ULB name to its directory identity
+    // ------------------------------------------------------------------
+
+    @Test
+    void anOfficialUlbNameResolvesToItsDirectoryCode() {
+        var match = service.matchByCityName("S.A.S.Nagar - Mohali");
+
+        assertTrue(match.mapped(), match.reason());
+        assertEquals("248325", match.location().ulbCode());
+        // The record carries the directory's own spellings for display -
+        // never a re-folded title-case form
+        assertEquals("S.A.S.Nagar - Mohali", match.location().city());
+        assertEquals("Punjab", match.location().state());
+        assertEquals("S.A.S Nagar", match.location().district());
+    }
+
+    @Test
+    void casingAndWhitespaceVariantsResolveToTheSameUlb() {
+        var padded = service.matchByCityName("  s.a.s.nagar - MOHALI  ");
+
+        assertTrue(padded.mapped(), padded.reason());
+        assertEquals("248325", padded.location().ulbCode());
+        assertEquals("S.A.S.Nagar - Mohali", padded.location().city());
+    }
+
+    @Test
+    void anUnknownCityNameIsUnmatchedRatherThanGuessed() {
+        var match = service.matchByCityName("Not A Real Town");
+
+        assertEquals(null, match.location());
+        assertTrue(match.reason().contains("no directory ULB named"), match.reason());
+    }
+
+    @Test
+    void aBlankCityNameIsUnmatched() {
+        assertEquals(null, service.matchByCityName(null).location());
+        assertEquals(null, service.matchByCityName("   ").location());
+    }
+
+    @Test
+    void aNameSharedBySeveralDistinctUlbsIsUnmatchedRatherThanPicked() throws Exception {
+        // Two different names each resolve to their own code; a name spelled
+        // differently but normalizing identically under TWO codes must never
+        // pick one municipality over the other
+        IndianLocationService fixtureService = new IndianLocationService(new ObjectMapper());
+        fixtureService.index(new ObjectMapper().readTree("""
+                {"states":[{"code":"1","name":"Test State","districts":[
+                  {"code":"11","name":"District One","ulbs":[
+                     {"code":"900001","name":"Twin Town","type":"Nagar Panchayat"}]},
+                  {"code":"12","name":"District Two","ulbs":[
+                     {"code":"900002","name":"Twin Town West","type":"Nagar Panchayat"},
+                     {"code":"900003","name":"Hamlet Town","type":"Nagar Panchayat"},
+                     {"code":"900004","name":"HAMLET   town","type":"Nagar Panchayat"}]}
+                ]}]}
+                """));
+
+        var first = fixtureService.matchByCityName("Twin Town");
+        assertTrue(first.mapped(), first.reason());
+        assertEquals("900001", first.location().ulbCode());
+
+        var second = fixtureService.matchByCityName("twin town west");
+        assertTrue(second.mapped(), second.reason());
+        assertEquals("900002", second.location().ulbCode());
+
+        // 'Hamlet Town' and 'HAMLET   town' normalize to one name shared by
+        // two distinct codes: the honest answer is "unmatched", not a guess
+        var ambiguous = fixtureService.matchByCityName("Hamlet Town");
+        assertEquals(null, ambiguous.location());
+        assertTrue(ambiguous.reason().contains("shared by 2 directory ULBs"), ambiguous.reason());
+    }
+
     private static JsonNode stateByCode(String code) {
         for (JsonNode state : directory.path("states")) {
             if (code.equals(state.path("code").asText())) {

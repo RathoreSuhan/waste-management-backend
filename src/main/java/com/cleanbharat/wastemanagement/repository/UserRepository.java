@@ -65,33 +65,95 @@ public interface UserRepository extends JpaRepository<User, Long> {
             @Param("rewardPoints") Integer rewardPoints
     );
 
+    /*
+      ========================================================================
+      Leaderboard boards
+      ========================================================================
+
+      Each scoped board matches its location with LOWER(TRIM(...)) on BOTH
+      sides - the submitted parameter is trimmed by the service, but the
+      stored column values are whatever registration or the reconciliation
+      pass wrote, so trimming only the input would still miss a stored
+      ' S.A.S Nagar '. Case-folded, whitespace-trimmed comparison is what
+      makes 'S.A.S Nagar', 'S.a.s Nagar' and 's.a.s nagar' one district.
+
+      The Top-10 limit and ordering ride on the Pageable (a fixed first
+      page); the JPQL carries the board's own ORDER BY reward points.
+    */
+
     /**
-     * Returns Top 10 cleaners
-     * belonging to a state.
+     * Returns the Top 10 cleaners of a state, matched case- and
+     * whitespace-insensitively against the stored state.
      */
-    List<User> findTop10ByRoleAndStateOrderByRewardPointsDesc(
-            Role role,
-            String state
+    @Query("""
+            SELECT u
+            FROM User u
+            WHERE u.role = :role
+              AND LOWER(TRIM(u.state)) = LOWER(TRIM(:state))
+            ORDER BY u.rewardPoints DESC
+            """)
+    List<User> findTop10InState(
+            @Param("role") Role role,
+            @Param("state") String state,
+            Pageable topTen
     );
 
     /**
-     * Returns Top 10 cleaners belonging to a city.
+     * Returns the Top 10 cleaners of a city, matched case- and
+     * whitespace-insensitively against the stored legacy city value.
      */
-    List<User> findTop10ByRoleAndCityOrderByRewardPointsDesc(
-            Role role,
-            String city
+    @Query("""
+            SELECT u
+            FROM User u
+            WHERE u.role = :role
+              AND LOWER(TRIM(u.city)) = LOWER(TRIM(:city))
+            ORDER BY u.rewardPoints DESC
+            """)
+    List<User> findTop10InCity(
+            @Param("role") Role role,
+            @Param("city") String city,
+            Pageable topTen
     );
 
     /**
-     * Returns Top 10 cleaners belonging to a district - every ULB inside it,
+     * Returns the Top 10 cleaners of one district - every ULB inside it,
      * because the stored district is what the refactor's eligibility and
-     * boards group on. The state is part of the match so two states naming a
-     * district the same way can never share a board.
+     * boards group on. The state is part of the match so two states naming
+     * a district the same way can never share a board; the district is
+     * never compared on its own.
      */
-    List<User> findTop10ByRoleAndStateAndDistrictOrderByRewardPointsDesc(
-            Role role,
-            String state,
-            String district
+    @Query("""
+            SELECT u
+            FROM User u
+            WHERE u.role = :role
+              AND LOWER(TRIM(u.state)) = LOWER(TRIM(:state))
+              AND LOWER(TRIM(u.district)) = LOWER(TRIM(:district))
+            ORDER BY u.rewardPoints DESC
+            """)
+    List<User> findTop10InDistrict(
+            @Param("role") Role role,
+            @Param("state") String state,
+            @Param("district") String district,
+            Pageable topTen
+    );
+
+    /**
+     * Returns the Top 10 cleaners accountable for one exact LGD ULB,
+     * matched case- and whitespace-insensitively against the stored
+     * ulb_code. A row without a reconciled code (NULL) can never match, so
+     * the ULB board stays scoped to its own municipal jurisdiction.
+     */
+    @Query("""
+            SELECT u
+            FROM User u
+            WHERE u.role = :role
+              AND LOWER(TRIM(u.ulbCode)) = LOWER(TRIM(:ulbCode))
+            ORDER BY u.rewardPoints DESC
+            """)
+    List<User> findTop10ByUlbCode(
+            @Param("role") Role role,
+            @Param("ulbCode") String ulbCode,
+            Pageable topTen
     );
 
 
