@@ -3,6 +3,7 @@ package com.cleanbharat.wastemanagement.service;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
 import com.cleanbharat.wastemanagement.dto.MunicipalOfficerProfileRequest;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 import com.cleanbharat.wastemanagement.entity.MunicipalCorporation;
 import com.cleanbharat.wastemanagement.exception.EmailAlreadyExistsException;
 import com.cleanbharat.wastemanagement.exception.InvalidRegistrationException;
@@ -13,16 +14,29 @@ import com.cleanbharat.wastemanagement.repository.UserRepository;
 import com.cleanbharat.wastemanagement.service.location.IndianLocationService;
 import com.cleanbharat.wastemanagement.service.location.IndianLocationService.ResolvedLocation;
 import com.cleanbharat.wastemanagement.service.location.IndianLocationService.UlbDirectoryEntry;
+import com.cleanbharat.wastemanagement.util.PaginationUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
+import java.util.Set;
 
 @Service // Marks this class as a Spring Service Bean
 @RequiredArgsConstructor // Constructor Injection
 public class MunicipalCorporationServiceImpl implements MunicipalCorporationService {
+
+    /*
+      Fields the admin register may be ordered by, arriving as request
+      parameters that end up in an ORDER BY clause - so they may only ever
+      be one of these literal strings. The row carries no createdAt column,
+      which is why id (auto-increment, higher = registered later) is the
+      default and delivers the newest-first order the admin screen shows.
+    */
+    private static final Set<String> MUNICIPAL_CORPORATION_SORT_PROPERTIES =
+            Set.of("id", "city", "organizationName", "ulbCode");
 
     private final MunicipalCorporationRepository municipalCorporationRepository;
     private final UserRepository userRepository;   // citizen/cleaner accounts share the same email space
@@ -76,13 +90,50 @@ public class MunicipalCorporationServiceImpl implements MunicipalCorporationServ
         return mapToResponse(savedMunicipalCorporation);
     }
 
-    @Override
-    public List<MunicipalCorporationResponse> getAllMunicipalCorporations() {
+    /*
+      One page of the register, read from the database.
 
-        return municipalCorporationRepository.findAll()
-                .stream()
-                .map(this::mapToResponse)
-                .toList();
+      The list used to be repository.findAll() mapped in memory - with 350+
+      registered bodies the admin screen downloaded every row to show ten.
+      Both the page slice and, when a keyword is present, the search now run
+      in the database through a Pageable, so a request costs one paged query
+      plus its count, never the whole table.
+    */
+    @Override
+    public PageResponse<MunicipalCorporationResponse> getAllMunicipalCorporations(
+            String keyword,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    ) {
+
+        // Newest first (id desc) unless a whitelisted field is asked for
+        Pageable pageable = PaginationUtil.resolve(
+                page,
+                size,
+                PaginationUtil.resolveSort(
+                        sortBy,
+                        direction,
+                        MUNICIPAL_CORPORATION_SORT_PROPERTIES,
+                        "id"
+                )
+        );
+
+        // A blank keyword is the unfiltered register, not a search
+        boolean searching = keyword != null && !keyword.isBlank();
+
+        Page<MunicipalCorporation> corporations = searching
+                ? municipalCorporationRepository.searchMunicipalCorporationsPaged(
+                        keyword.trim(), pageable)
+                : municipalCorporationRepository.findAll(pageable);
+
+        /*
+          mapToResponse enriches each mapped row with its directory location,
+          so bounding the rows per request also bounds that per-row work to
+          the page size.
+        */
+        return PageResponse.from(corporations, this::mapToResponse);
     }
 
     @Override

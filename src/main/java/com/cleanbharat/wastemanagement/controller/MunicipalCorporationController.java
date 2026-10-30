@@ -3,12 +3,13 @@ package com.cleanbharat.wastemanagement.controller;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
 import com.cleanbharat.wastemanagement.dto.MunicipalOfficerProfileRequest;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 import com.cleanbharat.wastemanagement.service.MunicipalCorporationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
 
 @RestController // Marks class as REST Controller
 @RequestMapping("/api/municipal-corporations") // Base URL
@@ -24,10 +25,38 @@ public class MunicipalCorporationController {
         return municipalCorporationService.createMunicipalCorporation(request);
     }
 
-    // Get All Municipal Corporations
+    /*
+      One page of the admin register.
+
+      The keyword searches city, organisation name, phone and email; the
+      page slice and the search both run in the database. Every parameter
+      is optional, so the plain GET an older client sends still resolves -
+      it just receives the first page of 10 wrapped in the same PageResponse
+      envelope the other admin registers already return.
+
+      Example: /api/municipal-corporations?keyword=mohali&page=0&size=10
+    */
     @GetMapping
-    public List<MunicipalCorporationResponse> getAllMunicipalCorporations() {
-        return municipalCorporationService.getAllMunicipalCorporations();
+    public ResponseEntity<PageResponse<MunicipalCorporationResponse>> getAllMunicipalCorporations(
+            @RequestParam(required = false)
+            String keyword,
+
+            @RequestParam(defaultValue = "0")
+            int page,
+
+            @RequestParam(defaultValue = "10")
+            int size,
+
+            @RequestParam(required = false)
+            String sortBy,
+
+            @RequestParam(required = false)
+            String direction
+    ) {
+        return ResponseEntity.ok(
+                municipalCorporationService.getAllMunicipalCorporations(
+                        keyword, page, size, sortBy, direction)
+        );
     }
 
     /** Returns only the corporation belonging to the authenticated officer. */

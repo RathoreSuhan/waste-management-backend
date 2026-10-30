@@ -3,16 +3,26 @@ package com.cleanbharat.wastemanagement.service;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationRequest;
 import com.cleanbharat.wastemanagement.dto.MunicipalCorporationResponse;
 import com.cleanbharat.wastemanagement.dto.MunicipalOfficerProfileRequest;
-
-import java.util.List;
+import com.cleanbharat.wastemanagement.dto.common.PageResponse;
 
 public interface MunicipalCorporationService {
 
     // Add new municipal corporation
     MunicipalCorporationResponse createMunicipalCorporation(MunicipalCorporationRequest request);
 
-    // Get all municipal corporations
-    List<MunicipalCorporationResponse> getAllMunicipalCorporations();
+    /*
+      One page of the admin register. The keyword searches city,
+      organisation name, phone and email; page is zero-based and the page
+      size defaults to 10 - the register is read from the database one page
+      at a time rather than loaded whole.
+    */
+    PageResponse<MunicipalCorporationResponse> getAllMunicipalCorporations(
+            String keyword,
+            int page,
+            int size,
+            String sortBy,
+            String direction
+    );
 
     // Get municipal corporation by city
     MunicipalCorporationResponse getByCity(String city);
