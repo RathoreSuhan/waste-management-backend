@@ -180,17 +180,6 @@ public class EmailVerificationService {
      *         was sent less than a minute ago, or the message could not be sent
      */
     public void sendCode(String email) {
-        sendCode(email, Purpose.REGISTRATION);
-    }
-
-    /**
-     * Sends a fresh sign-up code to the address, replacing any code already
-     * outstanding.
-     *
-     * @throws InvalidRegistrationException if mail is unconfigured, another code
-     *         was sent less than a minute ago, or the message could not be sent
-     */
-    public void sendCode(String email) {
         sendCode(email, Purpose.REGISTRATION, null);
     }
 
@@ -283,18 +272,6 @@ public class EmailVerificationService {
 
             throw new InvalidRegistrationException(SEND_FAILED);
         }
-    }
-
-    /**
-     * Checks a submitted sign-up code and consumes it.
-     *
-     * A correct code is removed on use, so one code creates at most one account.
-     *
-     * @throws InvalidRegistrationException if the code is missing, expired,
-     *         wrong, or too many wrong codes have already been tried
-     */
-    public void verifyCode(String email, String code) {
-        verifyCode(email, code, Purpose.REGISTRATION);
     }
 
     /**
