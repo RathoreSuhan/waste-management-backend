@@ -105,7 +105,7 @@ AI verification alone does **not** close a cleanup. An AI-verified cleanup only 
 
 ### 🏆 Reward & Leaderboard System
 
-Cleaners earn reward points only after the city Municipal Corporation approves the completed cleanup. GPS proof and AI verification are prerequisites, and every cleanup is rewarded **exactly once**.
+Cleaners earn reward points only after their assigned Municipal Corporation approves completion. GPS proof and AI verification are prerequisites; the service suppresses sequential duplicate rewards with an assignment-existence check, without a database uniqueness/locking guarantee for concurrent calls.
 
 The platform automatically generates:
 
@@ -194,7 +194,7 @@ Awaiting Municipal Completion Review
 Municipal Completion Sign-off
     │
     ▼
-Reward Generated (Once)
+Reward Generated (Repeat Check)
     │
     ▼
 Report Marked Resolved
@@ -221,10 +221,7 @@ Citizen Uploads Image
 MultipartFile
         │
         ▼
-Cloudinary Upload
-        │
-        ▼
-Download Image
+Read Image Bytes
         │
         ▼
 Detect MIME Type
@@ -242,6 +239,14 @@ Structured JSON Response
 Business Rule Validation
         │
         ├─────────────► Reject Report
+        │
+        ▼
+Duplicate Detection
+        │
+        ├─────────────► Existing Report
+        │
+        ▼
+Cloudinary Upload
         │
         ▼
 Accept Report
@@ -278,7 +283,18 @@ Verify
         ├────────────► Reject Cleanup
         │
         ▼
-Cleanup Approved
+AI Verification Passed
+        │
+        ▼
+AWAITING_APPROVAL
+        │
+        ▼
+Municipal Completion Review
+        │
+        ├────────────► REWORK_REQUIRED → New GPS + AI Proof
+        │
+        ▼
+COMPLETED (Municipal Sign-off)
         │
         ▼
 Reward Cleaner
@@ -301,10 +317,10 @@ Publish to Public Feed
 | ⭐ Community Voting | Citizens prioritize reports through a 5-star urgency system |
 | 💬 Community Discussion | Threaded comments with unlimited nested replies |
 | 📊 Engagement Analytics | Trending reports and dashboard analytics |
-| 🧹 Cleaner Workflow | Complete assignment lifecycle from claim to completion |
+| 🧹 Cleaner Workflow | Proposal, municipal assignment, GPS-verified execution, AI assessment and municipal completion |
 | 🤖 AI Cleanup Verification | Google Gemini Vision verifies completed cleanups |
 | 🏆 Reward System | Reward history and cleaner recognition |
-| 🌐 Public Feed | Public showcase of AI-verified cleanups |
+| 🌐 Public Feed | Public showcase of officially completed, AI-verified cleanups |
 | 🥇 Live Leaderboard | National, State, District and City rankings; personal ranking for signed-in cleaners |
 | 👨‍💼 Admin Portal | User management, report moderation, analytics, and deletion workflows |
 
@@ -317,7 +333,7 @@ Publish to Public Feed
 | Technology | Purpose |
 |------------|----------|
 | Java 21 | Primary Programming Language |
-| Spring Boot 3.5.x | Backend Framework |
+| Spring Boot 3.5.15 | Backend Framework |
 | Spring Security | Authentication & Authorization |
 | JWT | Stateless Authentication |
 | Spring Data JPA | ORM Layer |
@@ -338,6 +354,11 @@ Publish to Public Feed
 | JaCoCo | Code Coverage Analysis |
 
 ---
+
+The POM targets Java **21**, imports Spring Cloud **2025.0.0**, and explicitly
+pins Lombok **1.18.46**, JJWT **0.12.7**, Google API Client **2.7.0**, Cloudinary
+HTTP44 **1.39.0** and JaCoCo **0.8.13**. Other dependency versions are managed
+by the Spring Boot parent or Spring Cloud BOM; the Maven wrapper targets **3.9.16**.
 
 ## Artificial Intelligence
 
@@ -370,7 +391,7 @@ Publish to Public Feed
 
 # 🏛 Backend Architecture
 
-The project follows a **Layered Architecture** with clear separation of responsibilities.
+The backend of **Clean Bharat** follows a **production-oriented Layered Architecture** built with **Spring Boot**, with clear separation of responsibilities.
 
 ```text
                 Client (React)
@@ -391,52 +412,19 @@ The project follows a **Layered Architecture** with clear separation of responsi
 
 Each layer has a dedicated responsibility:
 
-- **Controllers** handle HTTP requests and responses.
-- **Services** contain business rules, AI integrations, and workflow logic.
-- **Repositories** interact with the PostgreSQL database using Spring Data JPA.
-- **Entities** model the domain and maintain relationships.
-- **DTOs** provide secure data transfer between the backend and frontend.
-
-This architecture promotes scalability, maintainability, testability, and clean separation of concerns.
-
-The backend is fully functional and production-oriented, supporting secure authentication, AI-powered validation, intelligent report management, community engagement, cleaner workflows, administrative tools, and public transparency.
-
-# 🏗 Backend Architecture & Implementation
-
-The backend of **Clean Bharat** follows a **production-oriented layered architecture** built with **Spring Boot**. Every module is designed with scalability, maintainability, and separation of concerns in mind.
-
-The application follows the standard flow:
-
-```text
-                    Client (React / Mobile)
-                             │
-                             ▼
-                      REST Controllers
-                             │
-                             ▼
-                     Service Layer
-             (Business Logic & AI Workflow)
-                             │
-                             ▼
-                    Repository Layer
-                             │
-                             ▼
-                     PostgreSQL Database
-```
-
-Each layer has a dedicated responsibility.
-
 | Layer | Responsibility |
 |--------|----------------|
 | Controller | Handles HTTP requests and responses |
-| Service | Contains business rules and workflow logic |
-| Repository | Performs database operations using Spring Data JPA |
-| Entity | Represents database tables and relationships |
-| DTO | Transfers data between backend and frontend |
+| Service | Contains business rules, AI integrations and workflow logic |
+| Repository | Interacts with PostgreSQL using Spring Data JPA |
+| Entity | Models domain tables and relationships |
+| DTO | Provides secure data transfer between backend and frontend |
 | Security | Handles JWT authentication and authorization |
 | Exception | Provides centralized error handling |
 
-This architecture keeps controllers lightweight, encapsulates business logic inside services, and ensures that database access remains isolated from presentation concerns.
+This architecture keeps controllers lightweight, encapsulates business logic inside services, and ensures that database access remains isolated from presentation concerns. It promotes scalability, maintainability, testability and clean separation of concerns.
+
+The backend is fully functional and production-oriented, supporting secure authentication, AI-powered validation, intelligent report management, community engagement, cleaner workflows, administrative tools, and public transparency.
 
 ---
 
@@ -567,7 +555,9 @@ With `MAIL_USERNAME` unset, password sign-up is **refused** with a message namin
 
 **Render free tier and SMTP.** Since September 2025 Render free web services block outbound SMTP ports `25`/`465`/`587`, so Gmail SMTP always times out there even with correct `MAIL_*` values (local delivery still works, and Google sign-in is unaffected because it already uses HTTPS/443). When `BREVO_API_KEY` is set, `EmailVerificationService` sends the same code via the Brevo HTTPS API (port 443) using `RestClient` with 10-second timeouts instead of `JavaMailSender`; the Brevo sender address must be verified in the Brevo dashboard. Without the key the SMTP path is used (local development and paid instances). Send failures log the exception plus its root cause (never the address, code, or key) so Render logs distinguish a network block from bad credentials.
 
-With `GOOGLE_CLIENT_ID` unset, every Google sign-in is refused for the same reason, and the frontend simply does not render the Google button. Password sign-up is unaffected.
+With backend `GOOGLE_CLIENT_ID` unset, Google sign-in is refused. The frontend
+hides its Google button independently when `VITE_GOOGLE_CLIENT_ID` is unset.
+Password sign-up is unaffected.
 
 There is **no `GOOGLE_CLIENT_SECRET`**. The browser hands over an ID token rather than an authorization code, so there is nothing to exchange and nothing confidential to configure.
 
@@ -753,11 +743,11 @@ selected district.
   on eligible reports in any ULB inside their registered district, and never
   outside it. A missing district on either the account or the report means
   the pair is simply not eligible - there is no city-string fallback. The
-  rule lives in one shared service and is re-proven on every cleaner action
-  path (listing, proposing, editing a proposal, starting work, the work
-  diary and completion proof), always after ownership is proven and before
-  any upload or write, so a historical out-of-district assignment refuses
-  cleanly instead of continuing.
+  rule lives in `CleanerDistrictEligibility` and is checked for open/nearby
+  listings, proposal submission/update, start, adding activity and completion
+  proof. Mutating paths check ownership where applicable before side effects.
+  Own assignment/proposal reads, proposal withdrawal and activity deletion do
+  not all recheck district eligibility; their ownership/state rules still apply.
 - **Leaderboards have four scopes.** National, state and city keep their
   exact existing behavior; the district board (`GET
   /api/leaderboard/district/{state}/{district}`) aggregates every ULB inside
@@ -910,10 +900,12 @@ Routing and contact lookup are deliberately split by report type:
 | Directory-backed (`ulb_code` present) | Exact ULB code only; assignment uses `findByUlbCode`, contact uses authenticated `GET /api/municipal-corporations/ulb/{ulbCode}` | Explicit `404`; no city fallback, alias or substitute corporation |
 | Legacy (`ulb_code` NULL) | Case-insensitive stored city; authenticated contact endpoint `GET /api/municipal-corporations/city/{city}` | Existing legacy `404` behavior |
 
-`MunicipalCorporationResponse` exposes only `id`, `city`, `ulbCode`,
-`organizationName`, `phone` and `email`; passwords and hashes are never mapped.
-Phone and email remain optional display fields — one missing field does not hide
-the organization or the other available contact.
+`MunicipalCorporationResponse` exposes `id`, `city`, `ulbCode`,
+`organizationName`, `phone`, `email` and nullable `mappedLocation` (state,
+district, ULB name and type); passwords and hashes are never mapped.
+Phone and email may be absent on historical response rows — one missing field does not hide
+the organization or the other available contact. Current create/update request
+validation requires contact fields.
 
 Benefits
 
@@ -924,19 +916,22 @@ Benefits
 
 ## Municipal Corporation Login
 
-One city maps to exactly one Municipal Corporation, and that corporation is the only account able to operate the Municipal Console for that city.
+Directory-backed creation enforces one Municipal Corporation per ULB code.
+Legacy city labels are not database-unique. Municipal authority comes from the
+registered corporation email and the assignment relationship, not a city supplied
+by the client.
 
 | Rule | Behaviour |
 |------|-----------|
-| Account creation | Only an Admin can register a corporation (city, organization, phone, email) |
+| Account creation | Only an Admin can register a corporation (directory triple or legacy city, organization, phone, email) |
 | Login identity | The corporation's registered email — nothing else resolves to municipal authority |
-| Default password | Issued automatically when the corporation row is created (documented for the operator, never printed by the API) |
+| Default password | A shared bootstrap default defined in the service is BCrypt-hashed at creation and handed over offline; it is never returned by the API. Changing it after first login is expected, not enforced |
 | Password change | `PATCH /api/account/password` works for corporations exactly as it does for users |
 | Self-registration | Blocked — `/api/auth/register` rejects `ROLE_MUNICIPAL_OFFICER` and rejects any email already used by a corporation |
-| Data scope | Every municipal endpoint resolves the corporation from the JWT, so one city can never read or decide another city's cleanups |
+| Data scope | Municipal cleanup-console reads/decisions resolve the corporation from the authenticated email and check assignment ownership |
 
 ```text
-Admin adds Municipal Corporation (city + email)
+Admin adds Municipal Corporation (ULB mapping or legacy city + email)
               │
               ▼
 Default password stored as a BCrypt hash
@@ -948,7 +943,7 @@ Corporation signs in with that email
 JWT issued with ROLE_MUNICIPAL_OFFICER
               │
               ▼
-Municipal Console scoped to that city only
+Municipal Console scoped to its assigned cleanups
 ```
 
 ---
@@ -960,11 +955,22 @@ Authenticated user accounts manage their own profile through `/api/account`; no 
 | Method | Endpoint | Behaviour |
 |--------|----------|-----------|
 | `GET` | `/api/account/profile` | Returns the signed-in user's name, email, role, and optional profile-picture URL. |
-| `PUT` | `/api/account/profile` | Updates an optional name and/or the uploaded Cloudinary profile-picture URL. Replacing an avatar cleans up the previous asset after the profile update is committed. |
+| `PUT` | `/api/account/profile` | Updates an optional name and/or uploaded Cloudinary profile-picture URL. Old-avatar cleanup normally runs after transaction commit, with immediate cleanup only when transaction synchronization is inactive; Cloudinary itself is not a database-transaction participant. |
 | `POST` | `/api/account/profile-picture` | Accepts a multipart `file`, uploads it to Cloudinary, and returns its secure URL for the profile update request. |
 | `DELETE` | `/api/account/profile-picture` | Deletes the current avatar from Cloudinary and clears the stored profile-picture URL. |
 | `GET` | `/api/account/record` | Returns the signed-in user's own identity and platform activity record. |
 | `PATCH` | `/api/account/password` | Changes the authenticated account password after validating `currentPassword`, `newPassword`, and `confirmPassword`; this also supports municipal-corporation accounts. |
+| `POST` | `/api/account/password/recovery/otp` | Sends a recovery code to the signed-in account's email when the current password is forgotten. |
+| `POST` | `/api/account/password/recovery/verify` | Checks the code and returns a short-lived recovery token. |
+| `POST` | `/api/account/password/recovery/confirm` | Consumes the recovery token to reset that same account's password. |
+
+Recovery is **authenticated**, not a logged-out forgot-password flow. Codes use
+Redis hashing, a ten-minute TTL, five guesses and a sixty-second resend cooldown.
+The reset token is generated from 32 random bytes, hashed, expires after ten
+minutes, is atomically single-use and is bound to the authenticated user or
+corporation. Officers also have `GET` / `PUT /api/municipal-corporations/me` for
+their own corporation profile/contact fields; `/api/account/profile` serves User
+accounts.
 
 ---
 
@@ -1054,9 +1060,10 @@ Admin
 
 # 🗄 Database Design
 
-The backend uses **PostgreSQL** in production and an in-memory **H2** database for automated tests.
-Hibernate maps the JPA entities with `spring.jpa.hibernate.ddl-auto=update`, while explicit,
-operator-run SQL handles the additive location-V2 columns. Tables 1–11 below map one-to-one to a
+The backend targets **PostgreSQL** in production; H2 is a test-scoped dependency
+used by repository slices, not a proven override for every test context. The
+actual protected database/JPA configuration was not inspected in this audit.
+Operator-run SQL handles the additive location-V2 columns. Tables 1–11 below map one-to-one to a
 class in `com.cleanbharat.wastemanagement.entity`; `location_backfill_audit` is an operational SQL
 audit table with no JPA entity.
 
@@ -1064,7 +1071,7 @@ audit table with no JPA entity.
 
 | # | Table | Entity | Purpose |
 |---|-------|--------|---------|
-| 1 | `users` | `User` | Every account — citizen, cleaner, municipal officer, admin; directory-backed rows include district and ULB code |
+| 1 | `users` | `User` | Citizen, cleaner and admin accounts; municipal login accounts live in `municipal_corporations`; directory-backed rows include district and ULB code |
 | 2 | `garbage_reports` | `GarbageReport` | Citizen-submitted complaints with GPS and either structured directory location or legacy city/state |
 | 3 | `municipal_corporations` | `MunicipalCorporation` | Admin-managed civic body, login owner and optional exact ULB mapping |
 | 4 | `cleanup_assignments` | `CleanupAssignment` | Work order raised for a report, owned by one assigned corporation |
@@ -1091,7 +1098,8 @@ audit table with no JPA entity.
                  │ state / city (ULB name)      │
                  │ district (nullable)          │
                  │ ulb_code (nullable)          │
-                 │ points / created_at          │
+                 │ reward_points / created_at   │
+                 │ google_subject / profile_pic │
                  └──────────────┬───────────────┘
                                 │ 1:N  creates
                                 ▼
@@ -1137,7 +1145,7 @@ audit table with no JPA entity.
    │                              │      │ organization_name            │
    │                              │      │ phone / email                │
    └──────────────┬───────────────┘      └──────────────┬───────────────┘
-                  │ 1:1 active work order               │ 1:N assigned jobs
+                  │ 1:N work-order relationship         │ 1:N assigned jobs
                   └───────────────┬─────────────────────┘
                                   ▼
               ┌──────────────────────────────────────────────┐
@@ -1165,8 +1173,8 @@ audit table with no JPA entity.
 
 | Child table | Column | Parent | Nullable | Notes |
 |-------------|--------|--------|----------|-------|
-| `garbage_reports` | `user_id` | `users` | No | Reporting citizen |
-| `cleanup_assignments` | `report_id` | `garbage_reports` | No | One active work order per report |
+| `garbage_reports` | `user_id` | `users` | **Yes** in JPA | Reporting citizen is set by report creation |
+| `cleanup_assignments` | `report_id` | `garbage_reports` | No | Service creates a work order; JPA mapping is many-to-one, not a unique report FK |
 | `cleanup_assignments` | `municipal_corporation_id` | `municipal_corporations` | No | Corporation assigned to the report (exact ULB destination for code-backed reports) |
 | `cleanup_assignments` | `cleaner_id` | `users` | **Yes** | Empty until a proposal is approved |
 | `cleanup_proposals` | `assignment_id` | `cleanup_assignments` | No | Cascade ALL + orphan removal from parent |
@@ -1174,7 +1182,7 @@ audit table with no JPA entity.
 | `cleanup_approvals` | `assignment_id` | `cleanup_assignments` | No | Assignment being reviewed |
 | `cleanup_approvals` | `proposal_id` | `cleanup_proposals` | **Yes** | Set for `PROPOSAL` stage, `NULL` for `COMPLETION` |
 | `cleanup_approvals` | `municipal_corporation_id` | `municipal_corporations` | No | Reviewing city body |
-| `cleanup_approvals` | `decided_by` | `users` | No | Officer accountability |
+| `cleanup_approvals` | `decided_by` | `users` | **Yes** | Current corporation-account decisions leave this unset; corporation identity is recorded separately |
 | `cleanup_activity_logs` | `assignment_id` | `cleanup_assignments` | No | Cascade ALL + orphan removal from parent |
 | `cleanup_activity_logs` | `cleaner_id` | `users` | No | Author of the progress note |
 | `votes` | `user_id`, `report_id` | `users`, `garbage_reports` | No | Unique pair — one vote per user per report |
@@ -1186,9 +1194,10 @@ audit table with no JPA entity.
 
 ## Table Notes
 
-- **`users`** — one table for all four roles; `cleaner_type` is filled only for cleaners.
-  Directory-backed accounts store canonical `state`, ULB name in `city`, nullable `district` and
-  nullable `ulb_code`. `(state, district)` is indexed for district boards. A cleaner whose district
+- **`users`** — the role enum supports four roles; normal municipal accounts are separate corporation
+  rows. `cleaner_type` is filled only for cleaners. Directory-backed accounts store canonical
+  `state`, ULB name in `city`, nullable `district` and nullable `ulb_code`. The operator location SQL
+  creates the `(state, district)` index; it is not declared on the User entity. A cleaner whose district
   has not been reconciled is not eligible for district-restricted work.
 - **`garbage_reports`** — stores GPS/address plus `state`, ULB name in `city`, nullable `district` and
   nullable `ulb_code`. Code-backed reports fill all four directory fields; legacy reports preserve
@@ -1212,11 +1221,14 @@ audit table with no JPA entity.
   A unique constraint `uk_proposal_assignment_cleaner (assignment_id, cleaner_id)` allows **many
   cleaners per assignment but only one live proposal per cleaner** — a revision updates the same row.
 - **`cleanup_approvals`** — a single reusable audit table for **both** review gates; `stage` says which
-  gate it belongs to, `decision` says the outcome, `decided_by` says which officer signed it, and
+  gate it belongs to, `decision` says the outcome, `municipal_corporation_id` records the corporation,
+  and nullable `decided_by` is not filled by current corporation-account decisions.
   `decided_at` is stamped once (decisions are never edited, only new rows are added).
 - **`cleanup_activity_logs`** — optional notes (`description`, `activity_at`, optional `image_url` and
-  GPS) that a cleaner may post only while the assignment is `IN_PROGRESS`.
-- **`reward_history`** — append-only ledger; the cached `users.points` total is derived from it.
+  GPS) that a cleaner may post while the assignment is `IN_PROGRESS` or `REWORK_REQUIRED`.
+  Description is required (maximum 1,000 characters); image and GPS are optional and are not AI-verified.
+- **`reward_history`** — points ledger; crediting also increments `users.reward_points` (`User.rewardPoints`).
+  Reads do not recompute that stored total from the ledger, and the assignment FK has no unique constraint.
 - **`public_feed_analytics`** — engagement counters for the public success-story feed, one row per
   completed assignment.
 
@@ -1232,7 +1244,7 @@ All enums are stored as text via `@Enumerated(EnumType.STRING)`. Exactly seven c
 | `cleanup_assignments.status` | `AssignmentStatus` | `PENDING`, `PROPOSAL_SUBMITTED`, `ASSIGNED`, `IN_PROGRESS`, `AWAITING_APPROVAL`, `REWORK_REQUIRED`, `CLAIMED` *(legacy)*, `COMPLETED` |
 | `cleanup_proposals.status` | `ProposalStatus` | `SUBMITTED`, `APPROVED`, `REJECTED`, `REVISION_REQUIRED`, `WITHDRAWN` |
 | `cleanup_approvals.stage` | `ApprovalStage` | `PROPOSAL`, `COMPLETION` |
-| `cleanup_approvals.decision` | `ApprovalDecision` | `APPROVED`, `REJECTED`, `REVISION_REQUIRED` |
+| `cleanup_approvals.decision` | `ApprovalDecision` | `APPROVED`, `REJECTED`, `REVISION_REQUIRED`, `REVISION_SUBMITTED` (system history entry on proposal revision) |
 
 `CLAIMED` is kept only so historical rows from the older direct-claim flow still load; new assignments
 never enter that state.
@@ -1241,9 +1253,10 @@ Enums that are **never** stored in the database (runtime / API only):
 
 | Enum | Where it lives |
 |------|----------------|
-| `BadgeType` (`BRONZE`, `SILVER`, `GOLD`) | Computed on the fly in `LeaderboardServiceImpl.calculateBadge()` from `users.points` |
-| `ImageRejectionReason` | AI validation responses and `InvalidReportImageException` only |
-| `LeaderboardType` | Request parameter for leaderboard scope |
+| `BadgeType` (`BRONZE`, `SILVER`, `GOLD`) | Computed on the fly in `LeaderboardServiceImpl.calculateBadge()` from `users.reward_points` |
+| `ImageRejectionReason` (`NO_GARBAGE`, `INSIGNIFICANT_GARBAGE`, `NOT_REAL_IMAGE`, `POOR_QUALITY`, `IRRELEVANT_SUBJECT`, `UNCERTAIN`) | AI validation responses and `InvalidReportImageException` only |
+| `LeaderboardType` (`NATIONAL`, `STATE`, `DISTRICT`, `CITY`) | Leaderboard scope in response DTOs |
+| `GarbageSeverity` (`LOW`, `MEDIUM`, `HIGH`) | AI report-validation output |
 
 ## Key Design Decisions
 
@@ -1255,20 +1268,22 @@ Enums that are **never** stored in the database (runtime / API only):
 | **Unique `(assignment_id, cleaner_id)`** | Competitive bidding without duplicate proposals from the same cleaner |
 | **Unique `(user_id, report_id)` on votes** | Prevents double voting on urgency |
 | **Self-referencing `comments`** | Threaded replies without a separate replies table |
-| **Append-only ledger + cached points** | `reward_history` keeps the audit trail while `users.points` keeps leaderboard queries fast |
+| **Append-only ledger + cached points** | `reward_history` keeps the audit trail while `users.reward_points` keeps leaderboard queries fast |
 | **Assigned-corporation scoping** | `municipal_corporation_id` on assignments/approvals keeps every officer inside their own corporation's data; exact ULB routing decides that corporation for code-backed reports |
 
 ## Schema Maintenance
 
-`spring.jpa.hibernate.ddl-auto=update` only ever **adds** to a live schema. It creates tables, columns
-and indexes, but it never widens a column, never drops a `NOT NULL`, never removes an old `UNIQUE` rule
-and never rewrites a stale `CHECK` constraint. So a database created months ago can keep rejecting
-writes that today's entities consider perfectly valid.
+When configured as `spring.jpa.hibernate.ddl-auto=update`, Hibernate schema update
+is not a complete migration strategy. Existing widths, nullability, unique rules
+and enum `CHECK` constraints need explicit review and targeted maintenance.
 
-Four startup runners repair exactly those gaps. Each one is PostgreSQL-only, idempotent (a no-op on
-every later boot), logs a warning instead of failing startup, and has a hand-runnable SQL twin in
-`src/main/resources/db/` for repairing a database without deploying. They are unrelated to the
-location-V2 data backfill described below.
+Four PostgreSQL schema-maintenance runners handle these gaps and log warnings
+rather than failing startup. They can run repeatedly; enum constraint repair
+still drops/recreates relevant checks on later boots rather than becoming a
+strict no-op. Related hand-runnable SQL is in `src/main/resources/db/`; scripts
+are not always exact twins (the stale-constraint script also adds a proposal FK
+and index). These runners are unrelated to the location-V2 data backfill in the
+**Location Model** section above.
 
 | Runner | Repairs | Manual script | Switch off with |
 |--------|---------|---------------|-----------------|
@@ -1282,6 +1297,11 @@ Why the column width one exists: `garbage_reports.description` was created as `v
 citizen was shown the duplicate-report wording for a report that was not a duplicate. Widening a
 `varchar` in PostgreSQL is a catalogue-only change — no table rewrite, no data touched. A column already
 changed to unbounded `text` is left alone rather than narrowed.
+
+`MunicipalPasswordInitializer` also runs on ordinary startup. It fills missing
+or blank corporation password hashes with the shared bootstrap default, without
+resetting a corporation's existing chosen password. It is separate from the
+PostgreSQL schema repairs and the operator-gated location migration.
 
 `db/backfill-report-status-in-progress.sql` is a one-time data fix, not a schema repair, and has no
 runner — it is meant to be executed by hand.
@@ -1409,7 +1429,8 @@ and verifies
 - Fake cleanup detection
 - Confidence threshold
 
-Only then is the cleanup approved.
+Only then does the cleanup enter `AWAITING_APPROVAL`. Municipal completion
+approval is still required before `COMPLETED`, rewards and public publication.
 
 ---
 
@@ -1488,7 +1509,7 @@ This algorithm combines **geospatial filtering** with **distance-based validatio
 
 # ⚡ Redis Caching Architecture
 
-The backend uses **Redis** (via Spring Data Redis + Spring Cache Abstraction) as a read-through cache for expensive, read-heavy aggregates. PostgreSQL remains the source of truth — Redis only holds small response DTOs so dashboards and leaderboards load in **~2 ms** instead of **~250 ms**.
+The backend uses **Redis** (via Spring Data Redis + Spring Cache Abstraction) as a read-through cache for expensive, read-heavy aggregates. PostgreSQL remains the source of truth — Redis holds response DTOs to avoid repeated queries. No latency or memory-footprint benchmark is established by the repository.
 
 ```text
 Client
@@ -1501,7 +1522,12 @@ Client
   └──► CACHE MISS → PostgreSQL query → store DTO in Redis with TTL → return
 ```
 
-Writes never update the cache directly. They **evict** it (`@CacheEvict` / `@Caching`), so the next read is a fresh miss. Every cached view therefore uses **eviction for correctness + TTL as a safety net**.
+Writes do not update cached DTOs directly; annotated paths **evict** them
+(`@CacheEvict` / `@Caching`) so the next read recomputes. TTL bounds stale
+responses for paths without eviction; it is not proof that every view is
+immediately fresh. For example, proof upload evicts admin/municipal statistics,
+not homepage impact, and new cleaner registration does not evict leaderboard
+results. Unlisted caches use the manager's default **10-minute TTL**.
 
 ## Cached Views
 
@@ -1512,7 +1538,10 @@ Writes never update the cache directly. They **evict** it (`@CacheEvict` / `@Cac
 | `admin_dashboard_stats` | `'overview'` | 10 min | `AdminServiceImpl.getDashboard()` | 10 aggregate counts; identical for every admin, so one shared key is safe |
 | `municipal_dashboard_stats` | signed-in corporation email (lowercased) | 5 min | `CleanupApprovalServiceImpl.getDashboardStats()` | 5 assignment-scoped counts; per-tenant key so one corporation can never read another's numbers |
 
-Total footprint is **~320 KB** — well under 1 MB of a 30 MB free tier. Only numbers and short labels are cached; Cloudinary image URLs and viewer-specific fields such as `likedByMe` are deliberately **never** cached.
+Cached values contain counts and short response fields, not image binaries.
+Public-feed responses (including Cloudinary URLs and viewer-specific `likedByMe`)
+are deliberately not Spring-cached. The directory's separate one-day HTTP cache
+and Redis OTP, recovery-token and rate-limit storage are not these view caches.
 
 
 
@@ -1523,12 +1552,18 @@ Total footprint is **~320 KB** — well under 1 MB of a 30 MB free tier. Only nu
 | Write event | Evicts | Reason |
 |-------------|--------|--------|
 | Report created | homepage, admin, municipal | New `PENDING` report moves all three overviews |
-| Register / vote / comment / reply | admin | User, vote and discussion totals shift |
+| Register / promote user / vote / comment / reply / delete comment | admin | User, vote and discussion totals shift |
 | Proposal submitted / decided | municipal | Site moves between pending and active queues |
 | Cleanup started / proof uploaded | admin + municipal | Report leaves `PENDING`; AI-verified count and queues move |
-| Completion approved or sent for rework | homepage, leaderboard, admin, municipal | Report `RESOLVED` +1, reward points, ranks and city queues move together |
+| Completion approved or sent for rework | homepage, leaderboard, admin, municipal | Both branches evict; only approval resolves the report and credits points, while rework retires the AI verdict |
 | Reward credited | leaderboard, homepage, admin | Points reorder the rankings (defensive double-eviction with completion approval) |
-| Assignment / report / user / corporation deleted | all affected caches | Counts, ranks and queues drop together |
+| Assignment deleted | homepage, leaderboard, admin, municipal | Related counts, ranks and queues may change |
+| Report deleted | admin + municipal; homepage/leaderboard additionally when its assignment is deleted | Dependent assignment deletion supplies the extra evictions |
+| User deleted | admin + municipal, with related deletion-service evictions when reports/assignments are removed | Depends on owned data |
+| Corporation deleted | municipal | Corporation register deletion does not evict every cache |
+
+Proposal edits/withdrawals and corporation creation have no matching view-cache
+eviction annotation; they must not be described as immediate invalidation paths.
 
 ```text
 Cleanup lifecycle × cache (verified against the Complete Cleanup Lifecycle):
@@ -1541,10 +1576,10 @@ approve completion → evicts homepage + leaderboard + admin + municipal
 
 ## Configuration Notes
 
-- Enabled once via `@EnableCaching` in `config/RedisConfig.java`; per-cache TTLs and JSON serialization (readable keys, Jackson DTO values, nulls never cached) live in the `RedisCacheManager` bean.
-- Connection comes from a single environment variable (`SPRING_DATA_REDIS_URL`, `redis://` or `rediss://` for TLS) using the default Lettuce client + Commons Pool2 — no credentials in `application.properties`.
+- `@EnableCaching` is declared on both `WastemanagementApplication` and `config/RedisConfig.java`; per-cache TTLs and JSON serialization (readable keys, Jackson DTO values, nulls never cached) live in the `RedisCacheManager` bean.
+- Spring Boot configures Lettuce from Redis connection properties such as `spring.data.redis.url` / `SPRING_DATA_REDIS_URL` (`redis://` or `rediss://` for TLS), with Commons Pool2 available. Actual environment configuration and credential storage were not inspected.
 - Covered by `RedisCacheSerializationTest` (DTO round-trip + municipal SpEL key isolation). `PlatformImpactResponse` uses the same Jackson-safe shape (`@NoArgsConstructor` + `@AllArgsConstructor`) so a cache HIT always deserializes.
-- Full interview-ready walkthrough with side-by-side code commentary: `Clean_Bharat_Redis_Caching_Revision_Notes.pdf` in the repository root.
+- Supplementary design notes: `Clean_Bharat_Redis_Caching_Revision_Notes.pdf` is not tracked in this repository; a copy exists in the outer workspace's `Revision_Notes/`. Current source is authoritative.
 
 ---
 
@@ -1574,18 +1609,23 @@ Placement is the whole design: the filter sits **after** `JwtAuthenticationFilte
 
 | Scope | Limit / min | Routes | Counted by |
 |-------|-------------|--------|------------|
-| `auth` | 10 | `/api/auth/**`, `/api/account/password` | IP — no principal exists yet on a credential path |
-| `ai` | 5 | `POST /api/reports`, `POST /api/files/upload`, cleanup proof upload, activity logs, cleanup proposals, `/test/**` (Gemini probe) | principal (IP for the anonymous upload route) |
-| `community` | 30 | non-`GET` on `/api/votes`, `/api/comments/**`, `/api/public-feed/**` | principal |
-| `staff` | 60 | `/api/admin/**`, `/api/municipal-corporations`, `/api/cleanup-approvals/**` | principal |
-| `pub` | 100 | fall-through — the public read surface (reports, feed, leaderboard, platform-impact) | IP |
+| `auth` | 10 | `/api/auth/**`, `/api/account/password` and descendants | IP on JWT-bypassed auth routes; principal on authenticated password routes |
+| `ai` | 5 | Report/file/proof uploads; `POST` activity logs; `POST`/`PUT` proposals; `/test/**` | Principal when resolved, otherwise IP |
+| `community` | 30 | non-`GET` on `/api/votes`, `/api/comments/**`, `/api/public-feed/**` | Principal when resolved; IP for anonymous views/shares |
+| `staff` | 60 | `/api/admin/**`, `/api/municipal-corporations` and descendants, `/api/cleanup-approvals/**` | Principal when resolved, otherwise IP |
+| `pub` | 100 | Remaining requests, including public reads and authenticated account/assignment/reward paths | Principal when resolved, otherwise IP |
 
-`GET /api/health` (the cold-start ping the frontend polls while the free-plan container wakes), anything under `/actuator`, and every `OPTIONS` pre-flight are **exempt**. The whole policy lives in one `resolve(method, path)` method in `config/RateLimitProperties.java` — no rate-limit logic is scattered across controllers.
+These are source defaults for a 60-second fixed window, not verified production
+values. Tier names do not set access rules. Profile-picture upload currently
+falls into `pub`, not `ai`. Public routes that bypass JWT processing remain
+IP-keyed even if a caller attaches a token.
+
+The `/api/health` path (all methods), paths beginning `/actuator`, and every `OPTIONS` pre-flight are **exempt**. The whole policy lives in one `resolve(method, path)` method in `config/RateLimitProperties.java` — no rate-limit logic is scattered across controllers.
 
 ## Key & Window
 
 ```text
-rl:{scope}:{sha256_16(identity)}:{window}
+rl:{scope}:{sha256_16(user:<principal> or ip:<address>)}:{window}
  │   │       │                     └── floor(epochSeconds / 60) — the key itself rotates
  │   │       └── first 16 hex of SHA-256, so no email is ever written to Redis in clear text
  │   └── auth | ai | community | staff | pub
@@ -1605,7 +1645,7 @@ The expiry sent to Redis is the **seconds remaining in the current window**, not
 - Anonymous callers are keyed by the client IP taken from `X-Forwarded-For` **counted from the right**, because the platform proxy appends the peer it actually observed; entries further left are caller-supplied and can say anything. `ratelimit.trusted-proxy-hops=0` ignores the header entirely for direct or local runs.
 - Every number is a `@Value` tunable with an in-code default (`ratelimit.enabled`, `.window-seconds`, `.public-per-minute`, `.auth-per-minute`, `.expensive-per-minute`, `.community-per-minute`, `.staff-per-minute`, `.trusted-proxy-hops`), so the application runs unchanged with no new configuration and any limit can be retuned per environment.
 - Covered by **37 unit tests** — `RateLimitServiceTest` (key shape, identity hashing, window-boundary expiry, fail-open) and `RateLimitFilterTest` (tier resolution, principal-vs-IP identity, proxy handling, 429 shape, single execution per request).
-- Full interview-ready walkthrough with side-by-side code commentary and a five-request data trace: `Clean_Bharat_Rate_Limiting_Revision_Notes.pdf` in the repository root.
+- Supplementary design notes: `Clean_Bharat_Rate_Limiting_Revision_Notes.pdf` is not tracked in this repository; a copy exists in the outer workspace's `Revision_Notes/`. Current source is authoritative.
 
 ---
 
@@ -1677,7 +1717,7 @@ Municipal Completion Review
 COMPLETED
           │
           ▼
-Reward Generated (Exactly Once)
+Reward Generated (Repeat Check)
           │
           ▼
 Report Marked as Resolved
@@ -1710,11 +1750,16 @@ Maintaining these states enables accurate progress tracking while preventing con
 
 Guard rails enforced by the service layer:
 
-- A cleanup cannot be started unless a matching `PROPOSAL` + `APPROVED` approval record exists.
+- New `ASSIGNED` work cannot be started unless a matching `PROPOSAL` + `APPROVED` approval record exists; legacy `CLAIMED` records retain their compatibility path.
 - Only the assigned cleaner can start work, log activity, or upload proof for that assignment.
-- Start and proof uploads are rejected beyond **50 metres** from the reported site, and also when the device reports no location at all.
+- Start and proof uploads require finite device coordinates and reject distances beyond **50 metres** when the report has site coordinates. Legacy reports without coordinates bypass the distance comparison.
 - Proof cannot be uploaded before the cleanup is started or after it is officially completed.
-- Activity logs are **optional**, and are only accepted while the cleanup is actively in progress.
+- Activity logs are **optional**, accepted in `IN_PROGRESS` or `REWORK_REQUIRED`; description is required, photo/GPS are optional and not AI-verified. Activity-file MIME/size validation is frontend-side; this backend path delegates nonempty files to Cloudinary without its own image validation.
+
+Municipal rework keeps the assigned cleaner, sets `REWORK_REQUIRED`, clears the
+completion timestamp and retires AI verification/confidence. New GPS + AI proof
+must pass before another municipal review. The supplementary workflow PDF's
+`IN_PROGRESS` rework wording differs from this current implementation.
 
 ---
 
@@ -1724,7 +1769,7 @@ Dedicated APIs provide cleaners with a personalized workspace.
 
 Cleaners can:
 
-- Browse Open Sites in their own state/city and submit proposals
+- Browse Open Sites across all ULBs in their registered state/district and submit proposals
 - Track Their Submitted Proposals and municipal decisions
 - View Approved Work Awaiting Start
 - View Assignments In Progress
@@ -1762,7 +1807,9 @@ canonical ULB names differ.
 
 The reward system motivates cleaner participation by recognizing officially verified cleanup efforts instead of merely tracking completed assignments.
 
-Rewards are generated **only after the Municipal Corporation approves the completion**, and every assignment can be rewarded **only once**.
+Rewards are generated **only after the Municipal Corporation approves completion**.
+The service checks for an existing assignment reward to suppress sequential
+repeat crediting; this is not a database-enforced concurrency guarantee.
 
 ---
 
@@ -1794,7 +1841,11 @@ Reward Points Added
 Leaderboard Updated
 ```
 
-The reward ledger is keyed on the assignment, so repeated approval calls, retries, or duplicated requests can never inflate a cleaner's points.
+The service uses `existsByAssignment` before adding **50 points** and a reward
+row. `reward_history.assignment_id` is not unique and this path has no explicit
+locking, so simultaneous approvals/rewards are not proven exactly-once by the
+current code. Ordinary repeat completion decisions are also blocked once the
+assignment is no longer `AWAITING_APPROVAL`.
 
 ---
 
@@ -1811,9 +1862,9 @@ Cleaner Rewards
 
 +50   Report #25
 
-+25   Bonus Campaign
++50   Report #29
 
-+10   Community Drive
++50   Report #32
 ```
 
 Benefits include:
@@ -1829,7 +1880,11 @@ Benefits include:
 
 To recognize outstanding contributions, Clean Bharat implements a live leaderboard system without introducing an additional leaderboard table.
 
-Instead, rankings are calculated dynamically using existing project data.
+Rankings are computed from existing data **on a cache miss**, not on every
+request. The four public boards use `leaderboard_top` with a **five-minute TTL**
+and write-path evictions; personal national standing is not Spring-cached.
+There is no dedicated leaderboard database table, but ranked response DTOs
+are cached in Redis.
 
 Reused entities include:
 
@@ -1848,8 +1903,8 @@ The platform supports multiple ranking scopes.
 | 🇮🇳 National | Top cleaners across the country |
 | 🏙 State | Top cleaners within a state |
 | 🗺 District | Top cleaners across every ULB in one `(state, district)` pair; identical district names in different states stay separate |
-| 🌆 City | Top cleaners within a city; retained for backward compatibility |
-| 👤 Personal | Individual cleaner ranking |
+| 🌆 City | Uniquely resolved official ULB name uses ULB identity; ambiguous/unknown names or unavailable directory use case-insensitive legacy city matching, never District fallback |
+| 👤 Personal | Authenticated cleaner's national standing, including positions beyond the public Top 10 |
 
 ---
 
@@ -1865,9 +1920,13 @@ Cleaners automatically receive achievement badges based on accumulated reward po
 
 ---
 
-## Competition Ranking
+## Sequential Ranking
 
-Instead of assigning sequential ranks, the backend implements **Competition Ranking**.
+The backend assigns **sequential board positions**. National ties are ordered
+by cleaner ID ascending after reward points descending; personal standing counts
+higher-point cleaners plus equal-point cleaners with smaller IDs. The paired
+30 October 2026 implementation changes and regression tests explicitly align
+personal standing with the national board.
 
 Example
 
@@ -1883,11 +1942,14 @@ Ranks
 
 1
 2
-2
+3
 4
 ```
 
-This provides fair rankings while handling ties correctly.
+State, district and city boards also number rows sequentially, but their current
+repository queries do not specify an ID tie-break. Equal-point ordering in those
+scopes is therefore not guaranteed. Some frontend competition-ranking copy is
+stale; it does not describe the current ranking contract.
 
 ---
 
@@ -1970,7 +2032,7 @@ Instead of hiding successful cleanup operations inside dashboards, the platform 
 
 A cleanup that is only AI-verified is **not** published. Publication happens after the Municipal Corporation signs off, so cleanups sent back for rework never appear as success stories.
 
-The feed remains accessible **without authentication**, allowing anyone to explore successful sanitation efforts.
+The feed remains readable **without authentication**, allowing anyone to explore successful sanitation efforts. Feed queries select `COMPLETED` assignments with `aiVerified=true`; they do not independently check approval history. Viewing/sharing is public; appreciation requires an authenticated User account (one like per account), and municipal corporation accounts are not User rows.
 
 ---
 
@@ -1989,7 +2051,8 @@ Municipal Completion Approval
 Reward Generated
         │
         ▼
-Public Feed Record Created
+Completed Assignment Eligible for Feed Query
+(analytics row initialized; no separate feed entity)
         │
         ▼
 Available for Everyone
@@ -2079,7 +2142,7 @@ Administrators can:
 Business rules ensure:
 
 - Admin accounts cannot be deleted.
-- Cleaners with claimed assignments cannot be removed.
+- Cleaners with any assigned work orders cannot be removed.
 - Only Citizens can be promoted to Admin.
 
 ---
@@ -2103,7 +2166,9 @@ Deleting a report automatically performs complete cleanup of associated resource
 - Reward History
 - Public Feed Analytics
 
-This guarantees database consistency without leaving orphaned records.
+The service coordinates dependent database deletion and external image cleanup.
+Database transactions do not make Cloudinary calls atomic, so external cleanup
+must not be described as a guaranteed rollback-safe operation.
 
 ---
 
@@ -2115,7 +2180,9 @@ Key improvements include:
 
 ### 🔄 Transaction-Safe Business Operations
 
-Critical workflows execute atomically to prevent partial database updates during failures.
+Critical database workflows use transactions to roll back partial database
+updates on failure. Gemini and Cloudinary calls are external side effects, not
+participants in the database transaction.
 
 ---
 
@@ -2171,8 +2238,8 @@ Several optimizations were implemented across the backend, including:
 - Reduced unnecessary database access
 - Efficient aggregate repository queries
 - Centralized business logic reuse
-- **Redis caching for read-heavy aggregates** — homepage impact stats, leaderboards, and both dashboards are served from Redis (~2 ms) instead of repeated `COUNT` / `AVG` queries against PostgreSQL (~250 ms). See **⚡ Redis Caching Architecture** below.
-- **Redis-backed rate limiting rejects abuse before it costs anything** — an over-limit request is stopped in the security filter, so no Gemini call, Cloudinary upload, or database query is ever made for it. See **🚦 API Rate Limiting** below.
+- **Redis caching for read-heavy aggregates** — homepage impact stats, leaderboards and both dashboards avoid repeated PostgreSQL aggregates on cache hits. No repository benchmark establishes latency. See **⚡ Redis Caching Architecture** above.
+- **Redis-backed rate limiting stops downstream expensive work** — over-limit requests do not reach controllers, Gemini, Cloudinary uploads or business-service database operations. JWT identity resolution runs first and may already query account repositories. See **🚦 API Rate Limiting** above.
 
 ---
 
@@ -2186,7 +2253,7 @@ Custom exceptions are used for business-specific scenarios, improving API clarit
 
 # 📈 Backend Evolution
 
-The backend was developed incrementally through **13 major phases**, with each phase extending the architecture while preserving modularity and maintainability.
+The backend was developed incrementally, with successive changes extending the architecture while preserving modularity and maintainability. The repository does not define a verifiable count of major development phases.
 
 Beginning with secure authentication and role-based access control (later extended with email-OTP verification and Google sign-in), the project gradually evolved into a comprehensive smart waste management platform featuring AI-powered report validation, intelligent duplicate detection, structured cleanup workflows, community engagement, analytics, public transparency, live leaderboards, and a production-ready administration system.
 
@@ -2200,36 +2267,50 @@ The backend follows a clean, modular, and layered architecture to ensure scalabi
 
 ```text
 project root
+├── pom.xml                       # Java 21 / Spring Boot 3.5.15
+├── mvnw / mvnw.cmd / .mvn         # Maven wrapper
+├── Dockerfile                    # Temurin 21; packages with tests skipped
+├── .github/workflows/keep-backend-awake.yml
 ├── scripts
-│   └── build_location_directory.py       # Deterministic directory generator
+│   └── build_location_directory.py # Deterministic directory generator
 └── src
-    └── main
-        ├── java
-        │   └── com.cleanbharat.wastemanagement
-        │       ├── client                # External API clients (Gemini AI)
-        │       ├── config                # Security/cache/rate limits + operator-gated LocationMigrationRunner
-        │       ├── controller            # REST Controllers (incl. LocationController)
-        │       ├── dto                   # Request & Response DTOs
-        │       ├── entity                # JPA Entities
-        │       ├── enums                 # Application Enums
-        │       ├── exception             # Global & Custom Exceptions
-        │       ├── repository            # Spring Data JPA Repositories
-        │       ├── security              # JWT, Spring Security & rate-limit filter
-        │       ├── service               # Business Logic
-        │       │   └── location          # IndianLocationService + duplicate-location validation
-        │       ├── util                  # Helper Utilities (incl. LocationUtil)
-        │       └── WasteManagementApplication.java
-        │
-        └── resources
-            ├── application.properties
-            ├── db                        # Additive migration, destructive recovery + maintenance SQL
-            └── locations
-                ├── india-ulb-directory.json
-                ├── README.md
-                └── source               # Pinned LGD workbook
+    ├── main
+    │   ├── java/com/cleanbharat/wastemanagement
+    │   │   ├── client             # Gemini Feign client
+    │   │   ├── config             # Security, cache, mail, AI and startup runners
+    │   │   ├── controller         # 19 REST controllers
+    │   │   ├── dto                # Requests/responses, including account recovery
+    │   │   │   ├── admin
+    │   │   │   ├── ai
+    │   │   │   ├── common         # PageResponse
+    │   │   │   └── gemini
+    │   │   ├── entity             # 11 JPA entity files
+    │   │   ├── enums              # 11 enum files
+    │   │   ├── exception
+    │   │   ├── mapper
+    │   │   ├── repository         # 11 Spring Data repositories
+    │   │   ├── security           # JWT and rate-limit filter
+    │   │   ├── service
+    │   │   │   ├── ai             # Gemini gateway/retry/parsing pipeline
+    │   │   │   ├── deletion       # Assignment/report/user resource cleanup
+    │   │   │   └── location       # Directory and duplicate-location validation
+    │   │   ├── util
+    │   │   └── WastemanagementApplication.java
+    │   └── resources
+    │       ├── application.properties # Protected environment-specific configuration
+    │       ├── templates          # Currently empty
+    │       ├── db                 # 7 operator/maintenance SQL scripts
+    │       └── locations
+    │           ├── india-ulb-directory.json
+    │           ├── README.md
+    │           └── source/Ulb_By_State_2026-10-18_16-34-45.xlsx
+    └── test/java/com/cleanbharat/wastemanagement
+        ├── config / controller / exception / repository / security
+        ├── service/location / util
+        └── WastemanagementApplicationTests.java
 ```
 
-Each package has a single responsibility, making the codebase easier to understand, extend, and maintain.
+Each package has a single responsibility, making the codebase easier to understand, extend, and maintain. The current main-source inventory contains **217 Java files**; test inventory is described in **Run Automated Tests**.
 
 ---
 
@@ -2258,9 +2339,9 @@ Ensure the following software is installed on your system.
 ## Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/clean-bharat.git
+git clone https://github.com/RathoreSuhan/waste-management-backend.git
 
-cd clean-bharat
+cd waste-management-backend
 ```
 
 ---
@@ -2279,7 +2360,12 @@ CREATE DATABASE wastemanagement;
 
 ## Configure Environment Variables
 
-Update your `application.properties` file.
+Use environment variables or a private external Spring configuration file. The
+names below are a setup reference derived from safe source declarations and
+Spring conventions, **not an inventory of the protected `application.properties`**.
+No example configuration template is shipped. Blank entries must be supplied
+locally; report-confidence/duplicate settings have no in-code defaults, so no
+unverified numeric values are suggested here.
 
 ```properties
 # Database
@@ -2313,6 +2399,9 @@ cloudinary.api-secret=
 # Google Gemini
 
 gemini.api.key=
+gemini.model=
+# Optional comma-separated fallback models
+gemini.fallback-models=
 
 # Google Sign-In
 # Only the public OAuth client id. There is no client secret in this flow:
@@ -2342,16 +2431,19 @@ mail.from=
 # Sender address must be verified in the Brevo dashboard. Secret - never commit.
 
 brevo.api-key=
+# Optional overrides (defaults are documented in Authentication Configuration)
+brevo.api-url=
+brevo.sender-name=
 
 # AI Configuration
 
-app.ai.confidence-threshold=0.85
+report.ai.minimum-confidence=
 
 # Duplicate Detection
 
-app.duplicate.radius-meters=100
+report.duplicate.radius-meters=
 
-app.duplicate.max-age-days=30
+report.duplicate.days=
 
 # Redis Caching (connection URL is provided via environment, never committed)
 
@@ -2399,7 +2491,7 @@ Start the Spring Boot application using Maven.
 mvn spring-boot:run
 ```
 
-Alternatively, open the project in **IntelliJ IDEA** and run the `WasteManagementApplication` class directly.
+Alternatively, open the project in **IntelliJ IDEA** and run the `WastemanagementApplication` class directly.
 
 ---
 
@@ -2410,6 +2502,19 @@ Execute all **Unit Tests** and **Integration Tests**.
 ```bash
 mvn test
 ```
+
+The current static inventory has **37 test classes**, **411 `@Test` methods**
+and **one parameterized method with seven cases**: **418 source-declared
+invocations**, not a fresh passing result. The earlier **316 passing** result in
+the Location rollout record is preserved as historical local validation.
+
+**Full-suite safety check:** `WastemanagementApplicationTests` uses a bare
+`@SpringBootTest` without datasource/service/migration overrides, and there are
+no test resources or active test profiles. H2 availability and mocks in isolated
+tests do not prove that the full context cannot reach PostgreSQL, Redis or
+Cloudinary, or enable the location runner. **`mvn test` was skipped in this audit**;
+confirm safe isolation for all three before running it. `mvn clean install` and
+`mvn clean verify` also execute tests and require the same precaution.
 
 The automated test suite includes:
 
@@ -2467,17 +2572,121 @@ The backend exposes RESTful APIs organized by functional modules.
 | Municipal Console | Assignment-scoped proposal decisions, active cleanups & completion sign-off |
 | Cleanup Proposals | Cleaner proposals and municipal decisions |
 | Cleanup Activity Log | Optional progress updates during an active cleanup |
-| Account | Password change for users and municipal corporations |
+| Account | Own profile, picture and activity record; authenticated password change/recovery for users and corporations |
 | Voting | Community Urgency Voting |
 | Comments | Threaded Community Discussions |
 | Analytics | Engagement Analytics & Dashboard |
 | Cleanup Assignment | Cleaner Workflow Management |
 | Rewards | Reward Summary & History |
-| Public Feed | AI Verified Cleanup Showcase |
+| Public Feed | Officially completed, AI-verified cleanup showcase |
 | Leaderboard | National, State, District and City rankings; signed-in cleaner personal ranking |
 | Admin | Dashboard, User & Report Management |
 
-The APIs follow REST principles and consistently return structured JSON responses with proper HTTP status codes.
+The APIs generally return JSON DTOs, including paginated `PageResponse` results,
+but file upload and some delete handlers return plain strings. Error responses
+also have endpoint-specific AI/duplicate-report shapes; not every failure is
+identical.
+
+### Complete controller endpoint inventory
+
+The **19 controllers declare 88 handler mappings** below. Public means
+`permitAll`; authenticated/role labels describe `SecurityConfig`, with service
+checks stated separately. `Cleaner`, `Citizen`, `Municipal` and `Admin` denote
+`ROLE_CLEANER`, `ROLE_CITIZEN`, `ROLE_MUNICIPAL_OFFICER` and `ROLE_ADMIN`.
+A public matcher is not a promise that an invalid attached JWT is ignored on
+all public routes. Framework Actuator endpoints and the outbound Feign mapping
+are not included in this controller count.
+
+| Method | Path | Security / additional contract |
+|---|---|---|
+| `POST` | `/api/auth/register` | Public; OTP request/verified registration; Citizen/Cleaner only |
+| `POST` | `/api/auth/google` | Public; verified Google identity, sign-in/link/registration-needed |
+| `POST` | `/api/auth/google/register` | Public; Citizen/Cleaner registration with directory triple |
+| `POST` | `/api/auth/login` | Public; User or corporation password login |
+| `PATCH` | `/api/account/password` | Authenticated; own User/corporation password |
+| `POST` | `/api/account/password/recovery/otp` | Authenticated; code sent to session identity |
+| `POST` | `/api/account/password/recovery/verify` | Authenticated; own code → reset token |
+| `POST` | `/api/account/password/recovery/confirm` | Authenticated; session-bound token consumption |
+| `POST` | `/api/account/profile-picture` | Authenticated; generic upload (no User-row lookup) |
+| `GET` | `/api/account/profile` | Authenticated; own User row |
+| `GET` | `/api/account/record` | Authenticated; own User activity record |
+| `DELETE` | `/api/account/profile-picture` | Authenticated; own User row |
+| `PUT` | `/api/account/profile` | Authenticated; own User row |
+| `POST` | `/api/reports` | Authenticated; service requires Citizen; multipart AI/location/duplicate validation |
+| `GET` | `/api/reports` | Public; paginated keyword/status list |
+| `GET` | `/api/reports/{id}` | Public; report detail |
+| `GET` | `/api/reports/my` | Authenticated explicit exception; own User reports |
+| `GET` | `/api/reports/my/summary` | Authenticated fallback; own User status totals |
+| `POST` | `/api/files/upload` | Public; generic Cloudinary upload |
+| `POST` | `/api/votes` | Citizen; create/update 1–5 urgency vote |
+| `POST` | `/api/comments/report/{reportId}` | Authenticated; User row required |
+| `POST` | `/api/comments/{commentId}/reply` | Authenticated; User row required |
+| `GET` | `/api/comments/report/{reportId}` | Public; recursive discussion tree |
+| `DELETE` | `/api/comments/{commentId}` | Authenticated; owner or Admin; cascades replies |
+| `GET` | `/api/analytics/report/{reportId}` | Public |
+| `GET` | `/api/analytics/trending` | Public |
+| `GET` | `/api/analytics/dashboard` | Authenticated |
+| `GET` | `/api/analytics/platform-impact` | Public; cached impact totals |
+| `POST` | `/api/cleanup-assignments/{assignmentId}/start` | Authenticated; service Cleaner/owner/district/GPS guards; approved ASSIGNED or legacy CLAIMED |
+| `POST` | `/api/cleanup-assignments/{assignmentId}/upload-image` | Authenticated; owner/district/GPS and working-state checks; no explicit Cleaner-role comparison in this method |
+| `GET` | `/api/cleanup-assignments/my-tasks` | Authenticated; service Cleaner guard; own tasks |
+| `GET` | `/api/cleanup-assignments/pending` | Authenticated; service Cleaner guard; district-eligible open work |
+| `GET` | `/api/cleanup-assignments/claimed` | Authenticated; service Cleaner guard; own legacy CLAIMED work |
+| `GET` | `/api/cleanup-assignments/in-progress` | Authenticated; service Cleaner guard; own IN_PROGRESS/REWORK_REQUIRED work |
+| `GET` | `/api/cleanup-assignments/completed` | Authenticated; service Cleaner guard; own completed work |
+| `GET` | `/api/cleanup-assignments/nearby` | Authenticated; service Cleaner guard; district-filtered open work, not a GPS-radius query |
+| `POST` | `/api/cleanup-proposals/assignment/{assignmentId}` | Cleaner; open-site/district/inspection-GPS checks; optional inspection photo |
+| `PUT` | `/api/cleanup-proposals/{proposalId}` | Cleaner; owner/district/editable-state checks |
+| `DELETE` | `/api/cleanup-proposals/{proposalId}` | Cleaner; owner/editable-state checks; soft withdrawal |
+| `GET` | `/api/cleanup-proposals/my` | Cleaner; own proposals |
+| `GET` | `/api/cleanup-proposals/{proposalId}` | Cleaner; proposal owner |
+| `POST` | `/api/cleanup-activity-logs/assignment/{assignmentId}` | Cleaner; owner/district; IN_PROGRESS/REWORK_REQUIRED; optional photo/GPS |
+| `GET` | `/api/cleanup-activity-logs/assignment/{assignmentId}` | Cleaner; assignment owner |
+| `DELETE` | `/api/cleanup-activity-logs/{activityLogId}` | Cleaner; log owner and working state |
+| `GET` | `/api/cleanup-approvals/stats` | Municipal; own corporation |
+| `GET` | `/api/cleanup-approvals/proposal-queue` | Municipal; own corporation |
+| `GET` | `/api/cleanup-approvals/assignment/{assignmentId}/proposals` | Municipal; assigned-corporation guard |
+| `POST` | `/api/cleanup-approvals/proposal/{proposalId}` | Municipal; assigned-corporation and proposal-state guards |
+| `GET` | `/api/cleanup-approvals/completion-queue` | Municipal; own corporation |
+| `POST` | `/api/cleanup-approvals/completion/{assignmentId}` | Municipal; assigned-corporation guard; AWAITING_APPROVAL |
+| `GET` | `/api/cleanup-approvals/assignment/{assignmentId}/history` | Municipal; assigned-corporation guard |
+| `GET` | `/api/cleanup-approvals/active-cleanups` | Municipal; own corporation |
+| `GET` | `/api/cleanup-approvals/completed-cleanups` | Municipal; own corporation |
+| `GET` | `/api/cleanup-approvals/assignment/{assignmentId}` | Municipal; assigned-corporation guard |
+| `GET` | `/api/cleanup-approvals/assignment/{assignmentId}/activity-logs` | Municipal; assigned-corporation guard |
+| `GET` | `/api/rewards/me` | Authenticated; service Cleaner guard |
+| `GET` | `/api/rewards/history` | Authenticated; service Cleaner guard |
+| `GET` | `/api/public-feed` | Public; paginated COMPLETED + AI-verified assignments |
+| `GET` | `/api/public-feed/{reportId}` | Public; eligible completed cleanup |
+| `POST` | `/api/public-feed/{reportId}/view` | Public; eligible completed cleanup |
+| `POST` | `/api/public-feed/{reportId}/like` | Authenticated explicit exception; User account, one toggled like per account/report |
+| `POST` | `/api/public-feed/{reportId}/share` | Public; eligible completed cleanup |
+| `GET` | `/api/leaderboard` | Public; National Top 10 |
+| `GET` | `/api/leaderboard/state/{state}` | Public; State Top 10 |
+| `GET` | `/api/leaderboard/district/{state}/{district}` | Public; exact State/District pair |
+| `GET` | `/api/leaderboard/city/{city}` | Public; unique directory ULB resolution or legacy city matching |
+| `GET` | `/api/leaderboard/me` | Authenticated; service Cleaner guard; national standing |
+| `GET` | `/api/locations` | Public; one-day HTTP cache; directory availability guard |
+| `POST` | `/api/municipal-corporations` | Admin |
+| `GET` | `/api/municipal-corporations` | Admin; paginated/searchable register |
+| `GET` | `/api/municipal-corporations/me` | Municipal; session corporation |
+| `GET` | `/api/municipal-corporations/{id}` | Admin |
+| `GET` | `/api/municipal-corporations/city/{city}` | Authenticated explicit exception; legacy contact |
+| `GET` | `/api/municipal-corporations/ulb/{ulbCode}` | Authenticated explicit exception; exact ULB contact |
+| `PUT` | `/api/municipal-corporations/{id}` | Admin; mapping preserves existing city |
+| `PUT` | `/api/municipal-corporations/me` | Municipal; own contacts/organization, not location mapping |
+| `DELETE` | `/api/municipal-corporations/{id}` | Admin; subject to database relationships |
+| `GET` | `/api/admin/reports/search` | Admin; paginated keyword search |
+| `GET` | `/api/admin/reports/filter` | Admin; status/state/district filters |
+| `DELETE` | `/api/admin/reports/{reportId}` | Admin; dependent-resource deletion |
+| `GET` | `/api/admin/dashboard` | Admin; cached overview |
+| `GET` | `/api/admin/users` | Admin; paginated optional role filter |
+| `GET` | `/api/admin/users/search` | Admin; keyword/role search |
+| `GET` | `/api/admin/users/{userId}` | Admin; user activity/detail |
+| `DELETE` | `/api/admin/users/{userId}` | Admin; Admin deletion forbidden; Cleaner with assignments forbidden |
+| `PUT` | `/api/admin/users/{userId}/promote` | Admin; Citizen-only promotion |
+| `GET` | `/api/health` | Public; no-store health response; limiter-exempt |
+| `GET` | `/test` | Authenticated; Gemini probe; expensive rate tier |
 
 ### Location-related API contract
 
@@ -2489,28 +2698,29 @@ The APIs follow REST principles and consistently return structured JSON response
 | Citizen | `POST /api/reports` (multipart) | V2 shape sends `stateCode`, `districtCode`, `ulbCode`; legacy shape sends `city`, `state`. Common fields include GPS/address/pincode and `image` |
 | Public | `GET /api/leaderboard` | National Top 10 |
 | Public | `GET /api/leaderboard/state/{state}` | State Top 10 |
-| **Authenticated in current source** | `GET /api/leaderboard/district/{state}/{district}` | District Top 10 across all ULBs in the exact State/District pair |
+| Public | `GET /api/leaderboard/district/{state}/{district}` | District Top 10 across all ULBs in the exact State/District pair |
 | Public | `GET /api/leaderboard/city/{city}` | Existing City Top 10; retained for compatibility |
 | Authenticated | `GET /api/municipal-corporations/ulb/{ulbCode}` | Exact location-V2 contact lookup; `404` on no configured corporation, with no city fallback |
 | Authenticated | `GET /api/municipal-corporations/city/{city}` | Legacy contact lookup for reports whose `ulbCode` is absent |
 
-The District controller is implemented on the public leaderboard page, but
-`SecurityConfig`'s current anonymous allow-list contains National, State and
-City only. District therefore falls through to `anyRequest().authenticated()`
-in the current source. This is documented as an access limitation, not hidden
-behind a claim of anonymous availability.
+All four geographic leaderboard GETs are public in `SecurityConfig` and bypass
+JWT processing in `JwtAuthenticationFilter`. `GET /api/leaderboard/me` remains
+authenticated and the service requires a cleaner account.
 
-Every endpoint is additionally subject to **Redis-backed rate limiting** in the security filter chain: exceeding a tier's per-minute allowance returns `429 Too Many Requests` with a `Retry-After` header, in the same JSON error shape as every other failure. See **🚦 API Rate Limiting**.
+Non-exempt requests are additionally subject to **Redis-backed rate limiting** in the security filter chain. Exceeding a tier's allowance returns `429 Too Many Requests` with `Retry-After` and the filter's `ErrorResponse` JSON. Health, actuator-prefix and `OPTIONS` exemptions apply; other failures need not share this shape. See **🚦 API Rate Limiting**.
 
 ---
 
 # 🧪 Testing
 
-The backend has been validated through a combination of **Manual API Testing**, **Unit Testing**, and **Integration Testing** to ensure correctness, reliability, and maintainability.
+The existing documentation records developer-reported manual API checks and
+historical local automated runs. This README audit checked source and test
+inventory; it did not rerun Postman, live services or the Maven suite.
 
 ## Manual API Testing
 
-The complete REST API workflow was tested using **Postman**, including:
+The following Postman checks are **historical developer-reported coverage**, not
+a fresh execution result from this documentation audit:
 
 - User Registration & Login
 - JWT Authentication
@@ -2552,16 +2762,16 @@ Unit tests validate:
 - Reward Calculation
 - Duplicate Detection Logic
 
-The municipal cleanup workflow is covered end to end, including:
+The municipal cleanup workflow has service-level and mocked-controller coverage, including:
 
 - A cleaner cannot start work before the municipality approves the proposal
 - A municipal corporation can only manage cleanups assigned to its authenticated corporation
 - Approving a proposal assigns the proposing cleaner
 - Rejected and revision-required proposals cannot be started
-- Activity logs are optional and only accepted while work is in progress
+- Activity logs are optional and accepted in `IN_PROGRESS` and `REWORK_REQUIRED`
 - Completion requires evidence, and GPS proximity is enforced on start and proof upload
 - AI verification runs before the municipal completion decision
-- No reward is generated before municipal approval, and never more than one per cleanup
+- No reward is generated before municipal approval; sequential repeat rewards are suppressed
 - A cleanup reaches the public feed only after official completion
 - Existing Citizen, Cleaner, and Admin permissions continue to work
 
@@ -2591,7 +2801,7 @@ Integration tests verify:
 - JPA Entity Relationships
 - Database Operations
 - REST API Endpoints
-- End-to-End Business Workflows
+- Business workflows exercised with mocked collaborators rather than live end-to-end services
 
 ---
 
@@ -2643,9 +2853,7 @@ Although the backend is feature-rich, several exciting enhancements are planned.
 
 ## Frontend
 
-- React.js
-- Tailwind CSS
-- Responsive UI
+- React and Tailwind frontend already implemented; extend existing responsive/accessibility coverage
 - Progressive Web App (PWA)
 
 ---
@@ -2669,8 +2877,7 @@ Although the backend is feature-rich, several exciting enhancements are planned.
 
 ## Artificial Intelligence
 
-- Automatic Garbage Classification
-- Garbage Severity Prediction
+- Extend current garbage-category and severity AI outputs
 - Illegal Dumping Detection
 - AI Heat Maps
 - Predictive Waste Analytics
@@ -2680,9 +2887,9 @@ Although the backend is feature-rich, several exciting enhancements are planned.
 ## Performance
 
 - Redis cache tuning (hit-rate metrics, stampede guards for hotter keys)
-- Docker Deployment
+- Extend the existing Java 21 Dockerfile into a verified deployment pipeline
 - Kubernetes
-- CI/CD Pipeline
+- CI/CD Pipeline (the existing GitHub workflow is a keep-awake ping, not a build/test pipeline)
 - Monitoring & Logging
 
 ---
